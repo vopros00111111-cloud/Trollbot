@@ -12,7 +12,9 @@ from dotenv import load_dotenv
 import os
 from flask import Flask
 import threading
-
+BOT_TOKEN = os.getenv("BOT_TOKEN")
+ADMIN_ID = int(os.getenv("ADMIN_ID"))
+DB_PATH = "currency_bot.db"
 app = Flask(__name__)
 
 @app.route('/')
@@ -27,10 +29,7 @@ def run_flask():
     app.run(host='0.0.0.0', port=10000)
 
 # Запускаем Flask в отдельном потоке
-threading.Thread(target=run_flask, daemon=True).start()
-   BOT_TOKEN = os.getenv("BOT_TOKEN")
-   ADMIN_ID = int(os.getenv("ADMIN_ID"))
-DB_PATH = "currency_bot.db"
+threading.Thread(target=run_flask, daemon=True).start()
 
 logging.basicConfig(level=logging.INFO)
 logging.getLogger('aiogram').setLevel(logging.DEBUG)
