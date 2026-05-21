@@ -217,12 +217,15 @@ async def cmd_takemoney(message: Message):
     try:
         target_name = parts[1].replace("@", "")
         amount = int(parts[2])
-if amount <= 0: return await message.answer("⛔ Сумма > 0")
+        if amount <= 0:
+        return await message.answer("⛔ Сумма > 0")
         
         async with aiosqlite.connect(DB_PATH) as db:
             target = await (await db.execute('SELECT user_id, username, balance FROM users WHERE username = ?', (target_name,))).fetchone()
-        if not target: return await message.answer(f"❌ @{target_name} не найден")
-        if target[2] < amount: return await message.answer(f"❌ У юзера мало денег ({target[2]})")
+        if not target:
+        return await message.answer(f"❌ @{target_name} не найден")
+        if target[2] < amount:
+        return await message.answer(f"❌ У юзера мало денег ({target[2]})")
         
         async with aiosqlite.connect(DB_PATH) as db:
             await db.execute('UPDATE users SET balance = balance - ? WHERE user_id = ?', (amount, target[0]))
