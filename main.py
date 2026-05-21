@@ -103,7 +103,8 @@ async def cmd_start(message: Message):
         reply_markup=get_main_keyboard()
     )
 
-@dp.message(Command("balance"))async def cmd_balance(message: Message):
+@dp.message(Command("balance"))
+async def cmd_balance(message: Message):
     data = await get_user_data(message.from_user.id)
     if not data:
         await cmd_start(message)
