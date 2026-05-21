@@ -77,83 +77,65 @@ async def add_balance(user_id: int, amount: int):
 
 @dp.message(Command("transfer"))
 async def cmd_transfer(message: Message):
-    sender_id = message.from_user.id
-    
-    # Получаем актуальный ник отправителя
-    current_username = message.from_user.username or f"user_{sender_id}"
-    await update_username(sender_id, current_username) 
-
     parts = message.text.split()
     
     if len(parts) != 3:
-        await message.answer("📝 Использование: `/transfer @username <сумма>`", parse_mode="Markdown")
+        await message.answer("❌ Формат: `/transfer @username сумма`", parse_mode="Markdown")
         return
     
     try:
-        # Убираем @ если есть
-        target_username_input = parts[1].replace("@", "")
+        # БЕРЕМ ВВОД И УБИРАЕМ @
+        target_input = parts[1].replace("@", "")
         amount = int(parts[2])
         
         if amount <= 0:
             await message.answer("⛔ Сумма должна быть больше 0.")
             return
         
-        # Ищем в базе (ищем БЕЗ @)
+        # ПРОВЕРЯЕМ СЕБЯ
+        sender_data = await get_user_data(message.from_user.id)
+        if not sender_data:
+             await message.answer("❌ Сначала нажми /start")
+             return
+        
+        if sender_data[1] < amount:
+             await message.answer(f"❌ Мало денег. У тебя {sender_data[1]}, надо {amount}")
+             return
+
+        # ИЩЕМ ПОЛУЧАТЕЛЯ В БАЗЕ (ищем БЕЗ @)
         async with aiosqlite.connect(DB_PATH) as db:
-            cursor = await db.execute('SELECT user_id, username, balance FROM users WHERE username = ?', (target_username_input,))
+            cursor = await db.execute('SELECT user_id, balance FROM users WHERE username = ?', (target_input,))
             target_data = await cursor.fetchone()
         
         if not target_data:
-            await message.answer(f"❌ Пользователь @{target_username_input} не найден в базе.\nПопроси его нажать /start.")
+            await message.answer(f"❌ Юзер @{target_input} не найден. Попроси его нажать /start.")
             return
+            
+        target_id = target_data[0]
         
-        target_id, target_username_db, _ = target_data
-        
-        if target_id == sender_id:
-            await message.answer("❌ Нельзя перевести монеты самому себе.")
+        if target_id == message.from_user.id:
+            await message.answer(" Себе переводить нельзя.")
             return
+
+        # СПИСЫВАЕМ У СЕБЯ
+        async with aiosqlite.connect(DB_PATH) as db:
+            await db.execute('UPDATE users SET balance = balance - ? WHERE user_id = ?', (amount, message.from_user.id))
+            # НАЧИСЛЯЕМ ЕМУ
+            await db.execute('UPDATE users SET balance = balance + ? WHERE user_id = ?', (amount, target_id))
+            await db.commit()
+
+        new_bal = (await get_user_data(message.from_user.id))[1]
         
-        sender_data = await get_user_data(sender_id)
-        if not sender_data:
-            await message.answer("❌ Сначала используй /start")
-            return
+        await message.answer(f"✅ Успешно! Отправлено {amount} монет пользователю @{target_input}. Твой баланс: {new_bal}")
         
-        _, sender_balance, _, _ = sender_data
-        
-        if sender_balance < amount:
-            await message.answer(f" Недостаточно монет. У тебя {sender_balance}, нужно {amount}")
-            return
-        
-        # Списываем у отправителя
-        await subtract_balance(sender_id, amount)
-        
-        # Начисляем получателю
-        await add_balance(target_id, amount)
-        
-        new_sender_balance = (await get_user_data(sender_id))[1]
-        new_target_balance = (await get_user_data(target_id))[1]
-        
-        await message.answer(
-            f"✅ Перевод успешен!\n\n"
-            f"Отправлено: **{amount}** монет\n"
-            f"Получатель: **@{target_username_db}**\n"
-            f"Твой баланс: **{new_sender_balance}**",
-            parse_mode="Markdown"
-        )
-        
+        # Уведомление получателю
         try:
-            await bot.send_message(
-                target_id,
-                f"🎁 Тебе перевели **{amount}** монет!\n"
-                f"От отправителя: {message.from_user.full_name}\n"
-                f"Твой баланс: **{new_target_balance}**",
-                parse_mode="Markdown"
-            )
+            await bot.send_message(target_id, f" Тебе перевели {amount} монет от {message.from_user.full_name}!")
         except:
             pass
-            
+
     except ValueError:
-        await message.answer("❌ Неверный формат. Пример: `/transfer @username 100`", parse_mode="Markdown")
+        await message.answer("❌ Ошибка. Пример: `/transfer @nik 100`")
 
 @dp.message(Command("start"))
 async def cmd_start(message: Message):
