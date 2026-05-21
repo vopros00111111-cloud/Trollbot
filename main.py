@@ -65,7 +65,7 @@ async def register_user(user_id: int, username: str):
     async with aiosqlite.connect(DB_PATH) as db:
         clean_username = username.replace("@", "") if username else f"user_{user_id}"
         await db.execute(
-            'INSERT OR IGNORE INTO users (user_id, username, balance) VALUES (?, ?, 0)',
+            'INSERT OR IGNORE INTO users (user_id, username, balance, is_admin) VALUES (?, ?, 0, 0)',
             (user_id, clean_username)
         )
         await db.execute('UPDATE users SET username = ? WHERE user_id = ?', (clean_username, user_id))
@@ -81,6 +81,12 @@ async def add_balance(user_id: int, amount: int):
         await db.execute('UPDATE users SET balance = balance + ? WHERE user_id = ?', (amount, user_id))
         await db.commit()
 
+async def is_admin(user_id: int) -> bool:
+    data = await get_user_data(user_id)
+    if not data:
+        return False
+    # data[4] это is_admin (0 или 1)
+    return data[4] == 1 if len(data) > 4 else user_id == ADMIN_ID
 # ========== КОМАНДЫ ==========
 @dp.message(Command("start"))
 async def cmd_start(message: Message):
@@ -198,6 +204,94 @@ async def cmd_help(message: Message):
             except ValueError:
         await message.answer("❌ Неверный формат. Пример: `/transfer @username 100`")
 
+@dp.message(Command("addadmin"))
+async def cmd_addadmin(message: Message):
+    # Проверяем что текущий пользователь - админ
+    if not await is_admin(message.from_user.id):
+        await message.answer("🔒 Только администратор может использовать эту команду.")
+        return
+    
+    parts = message.text.split()
+    if len(parts) != 2:
+        await message.answer("📝 Использование: `/addadmin @username` или `/addadmin user_id`", parse_mode="Markdown")
+        return
+    
+    try:
+        target_input = parts[1].replace("@", "")
+        
+        # Пробуем найти по username
+        async with aiosqlite.connect(DB_PATH) as db:
+            cursor = await db.execute('SELECT user_id, username FROM users WHERE username = ?', (target_input,))
+            target_data = await cursor.fetchone()
+        
+        if not target_data:
+            # Пробуем по ID если не нашли по username
+            try:
+                target_id = int(target_input)
+                async with aiosqlite.connect(DB_PATH) as db:
+                    cursor = await db.execute('SELECT user_id, username FROM users WHERE user_id = ?', (target_id,))
+                    target_data = await cursor.fetchone()
+            except:
+                pass
+        
+        if not target_data:
+            await message.answer(f"❌ Пользователь @{target_input} не найден.")
+            return
+        
+        target_id, target_username = target_data
+        
+        # Назначаем админом
+        async with aiosqlite.connect(DB_PATH) as db:
+            await db.execute('UPDATE users SET is_admin = 1 WHERE user_id = ?', (target_id,))
+            await db.commit()
+        
+        await message.answer(f"✅ Пользователь **@{target_username}** назначен администратором!", parse_mode="Markdown")
+        
+    except Exception as e:
+        await message.answer(f"❌ Ошибка: {e}")
+
+@dp.message(Command("removeadmin"))
+async def cmd_removeadmin(message: Message):
+    if not await is_admin(message.from_user.id):
+        await message.answer("🔒 Только администратор может использовать эту команду.")
+        return
+    
+    parts = message.text.split()
+    if len(parts) != 2:
+        await message.answer("📝 Использование: `/removeadmin @username` или `/removeadmin user_id`", parse_mode="Markdown")
+        return
+    
+    try:
+        target_input = parts[1].replace("@", "")
+        
+        async with aiosqlite.connect(DB_PATH) as db:
+            cursor = await db.execute('SELECT user_id, username FROM users WHERE username = ?', (target_input,))
+            target_data = await cursor.fetchone()
+        
+        if not target_data:
+            try:
+                target_id = int(target_input)
+                async with aiosqlite.connect(DB_PATH) as db:
+                    cursor = await db.execute('SELECT user_id, username FROM users WHERE user_id = ?', (target_id,))
+                    target_data = await cursor.fetchone()
+            except:
+                pass
+        
+        if not target_data:
+            await message.answer(f"❌ Пользователь @{target_input} не найден.")
+            return
+        
+        target_id, target_username = target_data
+        
+        # Снимаем админа
+        async with aiosqlite.connect(DB_PATH) as db:
+            await db.execute('UPDATE users SET is_admin = 0 WHERE user_id = ?', (target_id,))
+            await db.commit()
+        
+        await message.answer(f"✅ Пользователь **@{target_username}** снят с должности администратора.", parse_mode="Markdown")
+        
+    except Exception as e:
+        await message.answer(f"❌ Ошибка: {e}")
 # ========== КНОПКИ ==========
 @dp.message(F.text == "💰 Баланс")
 async def btn_balance(message: Message):
