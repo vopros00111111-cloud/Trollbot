@@ -195,7 +195,9 @@ async def cmd_help(message: Message):
         "/catalog — Показать товары\n"
         "/myitems — Мои товары (админ)\n\n"
         "👑 **Админ:**\n"
-        "/additem — Добавить товар\n"
+        "/givemoney @username <сумма> — Выдать монеты\n"
+        "/takemoney @username <сумма> — Забрать монеты\n"
+        "/additem Название|Описание|Цена|ссылка — Добавить товар\n"
         "/removeitem <ID> — Удалить товар\n"
         "/addadmin @username — Назначить админа\n"
         "/removeadmin @username — Снять админа\n\n"
@@ -412,6 +414,141 @@ async def cmd_myitems(message: Message):
     
     text += "\nИспользуй `/removeitem <ID>` для удаления"
     await message.answer(text, parse_mode="Markdown")
+# ========== АДМИН: УПРАВЛЕНИЕ БАЛАНСОМ ==========
+@dp.message(Command("givemoney"))
+async def cmd_givemoney(message: Message):
+    """Выдать монеты пользователю"""
+    if not await check_admin(message.from_user.id):
+        await message.answer("🔒 Только администратор")
+        return
+    
+    parts = message.text.split()
+    if len(parts) != 3:
+        await message.answer(
+            "📝 Использование: `/givemoney @username сумма`",
+            parse_mode="Markdown"
+        )
+        return
+    
+    try:
+        target_username = parts[1].replace("@", "")
+        amount = int(parts[2])
+        
+        if amount <= 0:
+            await message.answer("⛔ Сумма должна быть больше 0")
+            return
+        
+        # Ищем пользователя
+        async with aiosqlite.connect(DB_PATH) as db:
+            cursor = await db.execute(
+                'SELECT user_id, username, balance FROM users WHERE username = ?',
+                (target_username,)
+            )
+            target_data = await cursor.fetchone()
+        
+        if not target_data:
+            await message.answer(f"❌ Пользователь @{target_username} не найден")
+            return
+        
+        target_id, target_username, old_balance = target_data
+        
+        # Начисляем
+        await add_balance(target_id, amount)
+        new_balance = old_balance + amount
+        
+        await message.answer(
+            f"✅ Выдано **{amount}** монет пользователю **@{target_username}**\n"
+            f"Баланс до: {old_balance}\n"
+            f"Баланс после: {new_balance}",
+            parse_mode="Markdown"
+        )
+        
+        # Уведомление пользователю        try:
+            await bot.send_message(
+                target_id,
+                f"🎁 Администратор выдал тебе **{amount}** монет!\n"
+                f"Твой баланс: **{new_balance}**",
+                parse_mode="Markdown"
+            )
+        except:
+            pass
+            
+    except ValueError:
+        await message.answer("❌ Неверный формат. Пример: `/givemoney @username 100`")
+
+@dp.message(Command("takemoney", "removemoney"))
+async def cmd_takemoney(message: Message):
+    """Забрать монеты у пользователя"""
+    if not await check_admin(message.from_user.id):
+        await message.answer("🔒 Только администратор")
+        return
+    
+    parts = message.text.split()
+    if len(parts) != 3:
+        await message.answer(
+            "📝 Использование: `/takemoney @username сумма`",
+            parse_mode="Markdown"
+        )
+        return
+    
+    try:
+        target_username = parts[1].replace("@", "")
+        amount = int(parts[2])
+        
+        if amount <= 0:
+            await message.answer("⛔ Сумма должна быть больше 0")
+            return
+        
+        # Ищем пользователя
+        async with aiosqlite.connect(DB_PATH) as db:
+            cursor = await db.execute(
+                'SELECT user_id, username, balance FROM users WHERE username = ?',
+                (target_username,)
+            )
+            target_data = await cursor.fetchone()
+        
+        if not target_data:
+            await message.answer(f"❌ Пользователь @{target_username} не найден")
+            return
+        
+        target_id, target_username, old_balance = target_data
+                if old_balance < amount:
+            await message.answer(
+                f"❌ У пользователя недостаточно монет\n"
+                f"Баланс: {old_balance}, нужно списать: {amount}"
+            )
+            return
+        
+        # Списываем
+        async with aiosqlite.connect(DB_PATH) as db:
+            await db.execute(
+                'UPDATE users SET balance = balance - ? WHERE user_id = ?',
+                (amount, target_id)
+            )
+            await db.commit()
+        
+        new_balance = old_balance - amount
+        
+        await message.answer(
+            f"✅ Списано **{amount}** монет у пользователя **@{target_username}**\n"
+            f"Баланс до: {old_balance}\n"
+            f"Баланс после: {new_balance}",
+            parse_mode="Markdown"
+        )
+        
+        # Уведомление пользователю
+        try:
+            await bot.send_message(
+                target_id,
+                f"⚠️ Администратор списал **{amount}** монет\n"
+                f"Твой баланс: **{new_balance}**",
+                parse_mode="Markdown"
+            )
+        except:
+            pass
+            
+    except ValueError:
+        await message.answer("❌ Неверный формат. Пример: `/takemoney @username 100`")
 
 # ========== КНОПКИ ==========
 @dp.message(F.text == "💰 Баланс")
