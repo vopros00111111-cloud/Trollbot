@@ -146,7 +146,7 @@ async def cmd_claim(message: Message):
     user_id = message.from_user.id
     data = await get_user_data(user_id)
     if not data:        await register_user(user_id, message.from_user.username or f"user_{user_id}")
-    data = await get_user_data(user_id)
+        data = await get_user_data(user_id)
     _, balance, last_claim, _ = data
     now = datetime.utcnow()
     if last_claim:
@@ -382,8 +382,8 @@ async def cmd_addadmin(message: Message):
             await db.execute('UPDATE users SET is_admin = 1 WHERE user_id = ?', (target_id,))
             await db.commit()
         await message.answer(f"✅ **@{target_username}** назначен администратором!", parse_mode="Markdown")
-    except Exception as e:
-        await message.answer(f"❌ Ошибка: {e}")
+    except Exception:
+        await message.answer("❌ Ошибка при назначении.")
 
 @dp.message(Command("removeadmin"))
 async def cmd_removeadmin(message: Message):
@@ -406,8 +406,8 @@ async def cmd_removeadmin(message: Message):
             await db.execute('UPDATE users SET is_admin = 0 WHERE user_id = ?', (target_id,))
             await db.commit()
         await message.answer(f"✅ **@{target_username}** снят с должности администратора.", parse_mode="Markdown")
-    except Exception as e:
-        await message.answer(f"❌ Ошибка: {e}")
+    except Exception:
+        await message.answer("❌ Ошибка при снятии.")
 
 # ========== КНОПКИ ==========
 @dp.message(F.text == "💰 Баланс")
