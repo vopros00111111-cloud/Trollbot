@@ -10,7 +10,7 @@ from aiogram.types import Message, ReplyKeyboardMarkup, KeyboardButton
 from flask import Flask
 import threading
 
-# ========== FLASK ДЛЯ RENDER ==========
+# ========== FLASK ==========
 app = Flask(__name__)
 
 @app.route('/')
@@ -73,7 +73,7 @@ async def register_user(user_id: int, username: str):
 
 async def get_user_data(user_id: int):
     async with aiosqlite.connect(DB_PATH) as db:
-        cursor = await db.execute('SELECT username, balance, last_claim FROM users WHERE user_id = ?', (user_id,))
+        cursor = await db.execute('SELECT username, balance, last_claim, is_admin FROM users WHERE user_id = ?', (user_id,))
         return await cursor.fetchone()
 
 async def add_balance(user_id: int, amount: int):
@@ -81,20 +81,22 @@ async def add_balance(user_id: int, amount: int):
         await db.execute('UPDATE users SET balance = balance + ? WHERE user_id = ?', (amount, user_id))
         await db.commit()
 
-async def is_admin(user_id: int) -> bool:
+async def check_admin(user_id: int) -> bool:
+    """Проверка на админа"""
+    if user_id == ADMIN_ID:
+        return True
     data = await get_user_data(user_id)
-    if not data:
-        return False
-    # data[4] это is_admin (0 или 1)
-    return data[4] == 1 if len(data) > 4 else user_id == ADMIN_ID
+    if data and len(data) >= 4:
+        return data[3] == 1
+    return False
+
 # ========== КОМАНДЫ ==========
 @dp.message(Command("start"))
 async def cmd_start(message: Message):
     user_id = message.from_user.id
     username = message.from_user.username or f"user_{user_id}"
     await register_user(user_id, username)
-    
-    await message.answer(
+        await message.answer(
         f"👋 Привет! Я Trollcoin Bot.\n\n"
         f"Используй кнопки внизу или команды:\n"
         f"/balance — баланс\n"
@@ -105,11 +107,12 @@ async def cmd_start(message: Message):
 
 @dp.message(Command("balance"))
 async def cmd_balance(message: Message):
-    data = await get_user_data(message.from_user.id)
+    user_id = message.from_user.id
+    data = await get_user_data(user_id)
     if not data:
         await cmd_start(message)
         return
-    _, balance, _ = data
+    _, balance, _, _ = data
     await message.answer(f"💰 Твой баланс: **{balance}** монет", parse_mode="Markdown")
 
 @dp.message(Command("claim"))
@@ -120,7 +123,7 @@ async def cmd_claim(message: Message):
         await register_user(user_id, message.from_user.username or f"user_{user_id}")
         data = await get_user_data(user_id)
 
-    _, balance, last_claim = data
+    _, balance, last_claim, _ = data
     now = datetime.utcnow()
     
     if last_claim:
@@ -142,18 +145,19 @@ async def cmd_claim(message: Message):
 
 @dp.message(Command("help", "помощь"))
 async def cmd_help(message: Message):
-    await message.answer(
-        "📖 **Команды бота:**\n\n"
+    await message.answer(        "📖 **Команды бота:**\n\n"
         "/start — Регистрация\n"
         "/balance — Проверить баланс\n"
         "/claim — Ежедневная награда (10 монет раз в 24ч)\n"
         "/transfer @username <сумма> — Передать монеты\n"
-        "/help — Эта справка\n\n"
-        "Или используй кнопки внизу 👇",
+        "/addadmin @username — Назначить админа\n"
+        "/removeadmin @username — Снять админа\n"
+        "/help — Эта справка",
         parse_mode="Markdown"
     )
 
-@dp.message(Command("transfer"))async def cmd_transfer(message: Message):
+@dp.message(Command("transfer"))
+async def cmd_transfer(message: Message):
     parts = message.text.split()
     
     if len(parts) != 3:
@@ -179,7 +183,6 @@ async def cmd_help(message: Message):
             await message.answer(f"❌ Недостаточно монет. У тебя {sender_data[1]}, нужно {amount}")
             return
         
-        # Ищем получателя
         async with aiosqlite.connect(DB_PATH) as db:
             cursor = await db.execute('SELECT user_id FROM users WHERE username = ?', (target_username,))
             target_data = await cursor.fetchone()
@@ -191,10 +194,8 @@ async def cmd_help(message: Message):
         target_id = target_data[0]
         
         if target_id == sender_id:
-            await message.answer("❌ Нельзя перевести самому себе.")
-            return
+            await message.answer("❌ Нельзя перевести самому себе.")            return
         
-        # Перевод
         async with aiosqlite.connect(DB_PATH) as db:
             await db.execute('UPDATE users SET balance = balance - ? WHERE user_id = ?', (amount, sender_id))
             await db.execute('UPDATE users SET balance = balance + ? WHERE user_id = ?', (amount, target_id))
@@ -202,38 +203,31 @@ async def cmd_help(message: Message):
         
         new_balance = (await get_user_data(sender_id))[1]
         await message.answer(f"✅ Переведено **{amount}** монет @{target_username}\nТвой баланс: **{new_balance}**", parse_mode="Markdown")
-            except ValueError:
+        
+    except ValueError:
         await message.answer("❌ Неверный формат. Пример: `/transfer @username 100`")
 
+# ========== АДМИНКИ ==========
 @dp.message(Command("addadmin"))
 async def cmd_addadmin(message: Message):
-    # Проверяем что текущий пользователь - админ
-    if not await is_admin(message.from_user.id):
+    current_user_id = message.from_user.id
+    
+    # Проверяем админа
+    if not await check_admin(current_user_id):
         await message.answer("🔒 Только администратор может использовать эту команду.")
         return
     
     parts = message.text.split()
     if len(parts) != 2:
-        await message.answer("📝 Использование: `/addadmin @username` или `/addadmin user_id`", parse_mode="Markdown")
+        await message.answer("📝 Использование: `/addadmin @username`", parse_mode="Markdown")
         return
     
     try:
         target_input = parts[1].replace("@", "")
         
-        # Пробуем найти по username
         async with aiosqlite.connect(DB_PATH) as db:
             cursor = await db.execute('SELECT user_id, username FROM users WHERE username = ?', (target_input,))
             target_data = await cursor.fetchone()
-        
-        if not target_data:
-            # Пробуем по ID если не нашли по username
-            try:
-                target_id = int(target_input)
-                async with aiosqlite.connect(DB_PATH) as db:
-                    cursor = await db.execute('SELECT user_id, username FROM users WHERE user_id = ?', (target_id,))
-                    target_data = await cursor.fetchone()
-            except:
-                pass
         
         if not target_data:
             await message.answer(f"❌ Пользователь @{target_input} не найден.")
@@ -241,25 +235,25 @@ async def cmd_addadmin(message: Message):
         
         target_id, target_username = target_data
         
-        # Назначаем админом
         async with aiosqlite.connect(DB_PATH) as db:
             await db.execute('UPDATE users SET is_admin = 1 WHERE user_id = ?', (target_id,))
             await db.commit()
         
-        await message.answer(f"✅ Пользователь **@{target_username}** назначен администратором!", parse_mode="Markdown")
+        await message.answer(f"✅ **@{target_username}** назначен администратором!", parse_mode="Markdown")
         
     except Exception as e:
         await message.answer(f"❌ Ошибка: {e}")
-
 @dp.message(Command("removeadmin"))
 async def cmd_removeadmin(message: Message):
-    if not await is_admin(message.from_user.id):
+    current_user_id = message.from_user.id
+    
+    if not await check_admin(current_user_id):
         await message.answer("🔒 Только администратор может использовать эту команду.")
         return
     
     parts = message.text.split()
     if len(parts) != 2:
-        await message.answer("📝 Использование: `/removeadmin @username` или `/removeadmin user_id`", parse_mode="Markdown")
+        await message.answer("📝 Использование: `/removeadmin @username`", parse_mode="Markdown")
         return
     
     try:
@@ -270,29 +264,20 @@ async def cmd_removeadmin(message: Message):
             target_data = await cursor.fetchone()
         
         if not target_data:
-            try:
-                target_id = int(target_input)
-                async with aiosqlite.connect(DB_PATH) as db:
-                    cursor = await db.execute('SELECT user_id, username FROM users WHERE user_id = ?', (target_id,))
-                    target_data = await cursor.fetchone()
-            except:
-                pass
-        
-        if not target_data:
             await message.answer(f"❌ Пользователь @{target_input} не найден.")
             return
         
         target_id, target_username = target_data
         
-        # Снимаем админа
         async with aiosqlite.connect(DB_PATH) as db:
             await db.execute('UPDATE users SET is_admin = 0 WHERE user_id = ?', (target_id,))
             await db.commit()
         
-        await message.answer(f"✅ Пользователь **@{target_username}** снят с должности администратора.", parse_mode="Markdown")
+        await message.answer(f"✅ **@{target_username}** снят с должности администратора.", parse_mode="Markdown")
         
     except Exception as e:
         await message.answer(f"❌ Ошибка: {e}")
+
 # ========== КНОПКИ ==========
 @dp.message(F.text == "💰 Баланс")
 async def btn_balance(message: Message):
@@ -307,8 +292,7 @@ async def btn_help(message: Message):
     await cmd_help(message)
 
 # ========== ЗАПУСК ==========
-async def main():
-    await init_db()
+async def main():    await init_db()
     logger.info("🤖 Бот запущен. Ожидание сообщений...")
     await dp.start_polling(bot)
 
