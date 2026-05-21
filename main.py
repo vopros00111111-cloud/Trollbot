@@ -2,6 +2,7 @@ import asyncio
 import logging
 import os
 from datetime import datetime, timedelta
+
 import aiosqlite
 from aiogram import Bot, Dispatcher, F
 from aiogram.filters import Command
@@ -9,11 +10,12 @@ from aiogram.types import Message, ReplyKeyboardMarkup, KeyboardButton
 from flask import Flask
 import threading
 
+# ========== FLASK ==========
 app = Flask(__name__)
 
 @app.route('/')
 def home():
-    return "Trollcoin Bot is running! 🤖"
+    return "Trollcoin Bot is running! "
 
 @app.route('/health')
 def health():
@@ -24,15 +26,18 @@ def run_flask():
 
 threading.Thread(target=run_flask, daemon=True).start()
 
+# ========== НАСТРОЙКИ ==========
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 ADMIN_ID = int(os.getenv("ADMIN_ID"))
 DB_PATH = "currency_bot.db"
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 
+# ========== КНОПКИ ==========
 def get_main_keyboard():
     keyboard = ReplyKeyboardMarkup(
         keyboard=[
@@ -42,12 +47,13 @@ def get_main_keyboard():
         resize_keyboard=True
     )
     return keyboard
-
+# ========== БАЗА ДАННЫХ ==========
 async def init_db():
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute('''
             CREATE TABLE IF NOT EXISTS users (
-                user_id INTEGER PRIMARY KEY,                username TEXT,
+                user_id INTEGER PRIMARY KEY,
+                username TEXT,
                 balance INTEGER DEFAULT 0,
                 last_claim TEXT,
                 is_admin INTEGER DEFAULT 0
@@ -91,12 +97,16 @@ async def check_admin(user_id: int) -> bool:
     if data and len(data) >= 4:
         return data[3] == 1
     return False
-
-async def add_to_catalog(name, desc, price, img=None):
+# ========== КАТАЛОГ ФУНКЦИИ ==========
+async def add_to_catalog(name: str, description: str, price: int, image_url: str = None):
     async with aiosqlite.connect(DB_PATH) as db:
-        await db.execute('INSERT INTO catalog (name, description, price, image_url) VALUES (?, ?, ?, ?)', (name, desc, price, img))
+        await db.execute(
+            'INSERT INTO catalog (name, description, price, image_url) VALUES (?, ?, ?, ?)',
+            (name, description, price, image_url)
+        )
         await db.commit()
-async def remove_from_catalog(item_id):
+
+async def remove_from_catalog(item_id: int):
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute('DELETE FROM catalog WHERE id = ?', (item_id,))
         await db.commit()
@@ -106,287 +116,345 @@ async def get_catalog():
         cursor = await db.execute('SELECT id, name, description, price, image_url FROM catalog')
         return await cursor.fetchall()
 
+# ========== КОМАНДЫ ==========
 @dp.message(Command("start"))
 async def cmd_start(message: Message):
-    await register_user(message.from_user.id, message.from_user.username or f"user_{message.from_user.id}")
+    user_id = message.from_user.id
+    username = message.from_user.username or f"user_{user_id}"
+    await register_user(user_id, username)
     await message.answer(
-        f"👋 Привет! Я Trollcoin Bot.\nИспользуй кнопки или команды:\n/balance, /claim, /help",
+        f"👋 Привет! Я Trollcoin Bot.\n\n"
+        f"Используй кнопки внизу или команды:\n"
+        f"/balance — баланс\n"
+        f"/claim — награда\n"
+        f"/help — помощь",
         reply_markup=get_main_keyboard()
     )
 
 @dp.message(Command("balance"))
 async def cmd_balance(message: Message):
-    data = await get_user_data(message.from_user.id)
+    user_id = message.from_user.id
+    data = await get_user_data(user_id)
     if not data:
-        return await cmd_start(message)
-    await message.answer(f"💰 Твой баланс: **{data[1]}** монет", parse_mode="Markdown")
+        await cmd_start(message)
+        return
+    _, balance, _, _ = data
+    await message.answer(f"💰 Твой баланс: **{balance}** монет", parse_mode="Markdown")
 
 @dp.message(Command("claim"))
 async def cmd_claim(message: Message):
     user_id = message.from_user.id
     data = await get_user_data(user_id)
-    if not data:
-        await register_user(user_id, message.from_user.username or f"user_{user_id}")
+    if not data:        await register_user(user_id, message.from_user.username or f"user_{user_id}")
         data = await get_user_data(user_id)
-    
+
     _, balance, last_claim, _ = data
     now = datetime.utcnow()
     
     if last_claim:
         last_time = datetime.fromisoformat(last_claim)
         if now - last_time < timedelta(hours=24):
-            wait = timedelta(hours=24) - (now - last_time)
-            h, rem = divmod(int(wait.total_seconds()), 3600)
-            m, _ = divmod(rem, 60)
-            return await message.answer(f"⏳ Награда уже получена. Приходи через {h}ч {m}м.")
+            wait_time = timedelta(hours=24) - (now - last_time)
+            hours, remainder = divmod(int(wait_time.total_seconds()), 3600)
+            minutes, _ = divmod(remainder, 60)
+            await message.answer(f"⏳ Награда уже получена. Приходи через {hours}ч {minutes}м.")
+            return
 
-    await add_balance(user_id, 10)
-    new_bal = (await get_user_data(user_id))[1]
+    reward = 10
+    await add_balance(user_id, reward)
+    new_balance = (await get_user_data(user_id))[1]
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute("UPDATE users SET last_claim = ? WHERE user_id = ?", (now.isoformat(), user_id))
         await db.commit()
-    await message.answer(f"🎁 Ты получил **10** монет!\n💰 Новый баланс: **{new_bal}**", parse_mode="Markdown")
+    await message.answer(f"🎁 Ты получил **{reward}** монет!\n Новый баланс: **{new_balance}**", parse_mode="Markdown")
+
 @dp.message(Command("help", "помощь"))
 async def cmd_help(message: Message):
-    text = "📖 **Команды:**\n"
-    text += "/start — Регистрация\n"
-    text += "/balance — Баланс\n"
-    text += "/claim — Награда\n"
-    text += "/transfer @юзер сумма — Перевод\n"
-    text += "/catalog — Товары\n\n"
-    text += "👑 **Админ:**\n"
-    text += "/givemoney @юзер сумма\n"
-    text += "/takemoney @юзер сумма\n"
-    text += "/additem Имя|Описание|Цена|Фото\n"
-    text += "/removeitem ID\n"
-    text += "/addadmin @юзер\n"
-    text += "/removeadmin @юзер"
-    await message.answer(text, parse_mode="Markdown")
+    await message.answer(
+        " **Команды бота:**\n\n"
+        "👤 **Основные:**\n"
+        "/start — Регистрация\n"
+        "/balance — Проверить баланс\n"
+        "/claim — Ежедневная награда\n"
+        "/transfer @username <сумма> — Передать монеты\n\n"
+        "📦 **Каталог:**\n"
+        "/catalog — Показать товары\n"
+        "/myitems — Мои товары (админ)\n\n"
+        "👑 **Админ:**\n"
+        "/givemoney @username <сумма> — Выдать монеты\n"
+        "/takemoney @username <сумма> — Забрать монеты\n"
+        "/additem Название|Описание|Цена|ссылка\n"
+        "/removeitem <ID> — Удалить товар\n"
+        "/addadmin @username — Назначить админа\n"
+        "/removeadmin @username — Снять админа\n\n"
+        "/help — Эта справка",
+        parse_mode="Markdown"
+    )
 
 @dp.message(Command("transfer"))
 async def cmd_transfer(message: Message):
     parts = message.text.split()
-    if len(parts) != 3:
-        return await message.answer("📝 /transfer @username сумма")
+    if len(parts) != 3:        await message.answer("📝 Использование: `/transfer @username <сумма>`", parse_mode="Markdown")
+        return
     try:
-        target_name = parts[1].replace("@", "")
+        target_username = parts[1].replace("@", "")
         amount = int(parts[2])
         if amount <= 0:
-            return await message.answer("⛔ Сумма должна быть больше 0")
+            await message.answer("⛔ Сумма должна быть больше 0.")
+            return
         
         sender_id = message.from_user.id
         sender_data = await get_user_data(sender_id)
         if not sender_data:
-            return await message.answer("❌ Сначала /start")
+            await message.answer("❌ Сначала используй /start")
+            return
         if sender_data[1] < amount:
-            return await message.answer(f"❌ Мало денег. У тебя {sender_data[1]}")
+            await message.answer(f"❌ Недостаточно монет. У тебя {sender_data[1]}, нужно {amount}")
+            return
         
         async with aiosqlite.connect(DB_PATH) as db:
-            cursor = await db.execute('SELECT user_id FROM users WHERE username = ?', (target_name,))
-            target = await cursor.fetchone()
+            cursor = await db.execute('SELECT user_id FROM users WHERE username = ?', (target_username,))
+            target_data = await cursor.fetchone()
         
-        if not target:
-            return await message.answer(f"❌ Юзер @{target_name} не найден")
-        if target[0] == sender_id:
-            return await message.answer("❌ Себе нельзя")
+        if not target_data:
+            await message.answer(f"❌ Пользователь @{target_username} не найден.")
+            return
+        
+        target_id = target_data[0]
+        if target_id == sender_id:
+            await message.answer(" Нельзя перевести самому себе.")
+            return
         
         async with aiosqlite.connect(DB_PATH) as db:
             await db.execute('UPDATE users SET balance = balance - ? WHERE user_id = ?', (amount, sender_id))
-            await db.execute('UPDATE users SET balance = balance + ? WHERE user_id = ?', (amount, target[0]))
+            await db.execute('UPDATE users SET balance = balance + ? WHERE user_id = ?', (amount, target_id))
             await db.commit()
-                new_bal = (await get_user_data(sender_id))[1]
-        await message.answer(f"✅ Переведено **{amount}** монет @{target_name}\nБаланс: **{new_bal}**", parse_mode="Markdown")
+        
+        new_balance = (await get_user_data(sender_id))[1]
+        await message.answer(f"✅ Переведено **{amount}** монет @{target_username}\nТвой баланс: **{new_balance}**", parse_mode="Markdown")
     except ValueError:
-        await message.answer("❌ Ошибка формата")
+        await message.answer("❌ Неверный формат. Пример: `/transfer @username 100`")
 
+# ========== КАТАЛОГ КОМАНДЫ ==========
 @dp.message(Command("catalog", "каталог"))
 async def cmd_catalog(message: Message):
     items = await get_catalog()
     if not items:
-        return await message.answer("📦 Каталог пуст")
-    text = "📦 **КАТАЛОГ:**\n\n"
-    for item in items:
-        text += f"🔹 **{item[1]}**\n"
-        text += f"   {item[2]}\n"
-        text += f"   💰 Цена: {item[3]} монет\n\n"
+        await message.answer("📦 Каталог пуст")
+        return
+    text = "📦 **КАТАЛОГ ТОВАРОВ:**\n\n"
+    for item in items:        item_id, name, desc, price, image = item
+        text += f"🔹 **{name}**\n"
+        text += f"   {desc}\n"
+        text += f"   💰 Цена: {price} монет\n\n"
     await message.answer(text, parse_mode="Markdown")
 
 @dp.message(Command("additem"))
 async def cmd_additem(message: Message):
     if not await check_admin(message.from_user.id):
-        return await message.answer("🔒 Только админ")
+        await message.answer(" Только администратор")
+        return
     parts = message.text.split(maxsplit=1)
     if len(parts) < 2:
-        return await message.answer("📝 /additem Имя|Описание|Цена|Ссылка")
+        await message.answer("📝 Использование: `/additem Название|Описание|Цена|ссылка`", parse_mode="Markdown")
+        return
     try:
-        d = parts[1].split("|")
-        if len(d) < 3:
+        data = parts[1].split("|")
+        if len(data) < 3:
             raise ValueError
-        name = d[0].strip()
-        desc = d[1].strip()
-        price = int(d[2].strip())
-        img = d[3].strip() if len(d) > 3 else None
-        await add_to_catalog(name, desc, price, img)
-        await message.answer(f"✅ Товар **{name}** добавлен!", parse_mode="Markdown")
-    except Exception:
-        await message.answer("❌ Ошибка. Формат: Имя|Описание|Цена|Ссылка")
+        name = data[0].strip()
+        description = data[1].strip()
+        price = int(data[2].strip())
+        image_url = data[3].strip() if len(data) > 3 else None
+        await add_to_catalog(name, description, price, image_url)
+        await message.answer(f"✅ Товар **{name}** добавлен в каталог!", parse_mode="Markdown")
+    except (ValueError, IndexError):
+        await message.answer("❌ Ошибка формата. Проверь данные!")
 
 @dp.message(Command("removeitem"))
 async def cmd_removeitem(message: Message):
     if not await check_admin(message.from_user.id):
-        return await message.answer("🔒 Только админ")
+        await message.answer("🔒 Только администратор")
+        return
     parts = message.text.split()
     if len(parts) != 2:
-        return await message.answer("📝 /removeitem ID")
+        await message.answer("📝 Использование: `/removeitem <ID товара>`", parse_mode="Markdown")
+        return
     try:
-        await remove_from_catalog(int(parts[1]))
-        await message.answer("✅ Товар удалён!")
-    except Exception:
-        await message.answer("❌ Ошибка ID")
+        item_id = int(parts[1])
+        await remove_from_catalog(item_id)
+        await message.answer(f"✅ Товар с ID {item_id} удалён!")
+    except ValueError:
+        await message.answer("❌ ID должен быть числом!")
+
 @dp.message(Command("myitems"))
 async def cmd_myitems(message: Message):
     items = await get_catalog()
     if not items:
-        return await message.answer("📦 Каталог пуст")
-    text = "📦 **Товары (ID):**\n"
+        await message.answer("📦 Каталог пуст")
+        return    text = "📦 **КАТАЛОГ (для админа):**\n\n"
     for item in items:
-        text += f"`{item[0]}` — {item[1]} ({item[3]} монет)\n"
+        item_id, name, desc, price, _ = item
+        text += f"`{item_id}` — {name} ({price} монет)\n"
+    text += "\nИспользуй `/removeitem <ID>` для удаления"
     await message.answer(text, parse_mode="Markdown")
 
+# ========== АДМИН: ДЕНЬГИ (НОВОЕ) ==========
 @dp.message(Command("givemoney"))
 async def cmd_givemoney(message: Message):
     if not await check_admin(message.from_user.id):
-        return await message.answer("🔒 Только админ")
+        await message.answer("🔒 Только администратор")
+        return
+    
     parts = message.text.split()
     if len(parts) != 3:
-        return await message.answer("📝 /givemoney @username сумма")
+        await message.answer("📝 Использование: `/givemoney @username сумма`", parse_mode="Markdown")
+        return
+    
     try:
-        target_name = parts[1].replace("@", "")
+        target_username = parts[1].replace("@", "")
         amount = int(parts[2])
         if amount <= 0:
-            return await message.answer("⛔ Сумма должна быть больше 0")
+            await message.answer("⛔ Сумма должна быть больше 0")
+            return
         
         async with aiosqlite.connect(DB_PATH) as db:
-            cursor = await db.execute('SELECT user_id, username, balance FROM users WHERE username = ?', (target_name,))
-            target = await cursor.fetchone()
+            cursor = await db.execute('SELECT user_id, username, balance FROM users WHERE username = ?', (target_username,))
+            target_data = await cursor.fetchone()
         
-        if not target:
-            return await message.answer(f"❌ @{target_name} не найден")
+        if not target_data:
+            await message.answer(f"❌ Пользователь @{target_username} не найден")
+            return
         
-        await add_balance(target[0], amount)
-        new_bal = target[2] + amount
-        await message.answer(f"✅ Выдано **{amount}** монет @{target[1]}\nБаланс: {new_bal}", parse_mode="Markdown")
+        target_id, target_username, old_balance = target_data
+        await add_balance(target_id, amount)
+        new_balance = old_balance + amount
+        
+        await message.answer(f"✅ Выдано **{amount}** монет пользователю **@{target_username}**\nБаланс до: {old_balance}\nБаланс после: {new_balance}", parse_mode="Markdown")
         
         try:
-            await bot.send_message(
-                target[0],
-                f"🎁 Админ выдал **{amount}** монет!\nБаланс: **{new_bal}**",
-                parse_mode="Markdown"
-            )
-        except Exception:
+            await bot.send_message(target_id, f" Администратор выдал тебе **{amount}** монет!\nТвой баланс: **{new_balance}**", parse_mode="Markdown")
+        except:
             pass
     except ValueError:
-        await message.answer("❌ Ошибка формата")
+        await message.answer("❌ Неверный формат. Пример: `/givemoney @username 100`")
 
 @dp.message(Command("takemoney", "removemoney"))
 async def cmd_takemoney(message: Message):
-    if not await check_admin(message.from_user.id):
-        return await message.answer("🔒 Только админ")
-    parts = message.text.split()    if len(parts) != 3:
-        return await message.answer("📝 /takemoney @username сумма")
+    if not await check_admin(message.from_user.id):        await message.answer("🔒 Только администратор")
+        return
+    
+    parts = message.text.split()
+    if len(parts) != 3:
+        await message.answer("📝 Использование: `/takemoney @username сумма`", parse_mode="Markdown")
+        return
+    
     try:
-        target_name = parts[1].replace("@", "")
+        target_username = parts[1].replace("@", "")
         amount = int(parts[2])
         if amount <= 0:
-            return await message.answer("⛔ Сумма должна быть больше 0")
+            await message.answer("⛔ Сумма должна быть больше 0")
+            return
         
         async with aiosqlite.connect(DB_PATH) as db:
-            cursor = await db.execute('SELECT user_id, username, balance FROM users WHERE username = ?', (target_name,))
-            target = await cursor.fetchone()
+            cursor = await db.execute('SELECT user_id, username, balance FROM users WHERE username = ?', (target_username,))
+            target_data = await cursor.fetchone()
         
-        if not target:
-            return await message.answer(f"❌ @{target_name} не найден")
-        if target[2] < amount:
-            return await message.answer(f"❌ У юзера мало денег ({target[2]})")
+        if not target_data:
+            await message.answer(f"❌ Пользователь @{target_username} не найден")
+            return
+        
+        target_id, target_username, old_balance = target_data
+        
+        if old_balance < amount:
+            await message.answer(f"❌ У пользователя недостаточно монет\nБаланс: {old_balance}, нужно списать: {amount}")
+            return
         
         async with aiosqlite.connect(DB_PATH) as db:
-            await db.execute('UPDATE users SET balance = balance - ? WHERE user_id = ?', (amount, target[0]))
+            await db.execute('UPDATE users SET balance = balance - ? WHERE user_id = ?', (amount, target_id))
             await db.commit()
         
-        new_bal = target[2] - amount
-        await message.answer(f"✅ Списано **{amount}** монет у @{target[1]}\nБаланс: {new_bal}", parse_mode="Markdown")
+        new_balance = old_balance - amount
+        
+        await message.answer(f"✅ Списано **{amount}** монет у пользователя **@{target_username}**\nБаланс до: {old_balance}\nБаланс после: {new_balance}", parse_mode="Markdown")
         
         try:
-            await bot.send_message(
-                target[0],
-                f"⚠️ Админ списал **{amount}** монет!\nБаланс: **{new_bal}**",
-                parse_mode="Markdown"
-            )
-        except Exception:
+            await bot.send_message(target_id, f"⚠️ Администратор списал **{amount}** монет\nТвой баланс: **{new_balance}**", parse_mode="Markdown")
+        except:
             pass
     except ValueError:
-        await message.answer("❌ Ошибка формата")
+        await message.answer("❌ Неверный формат. Пример: `/takemoney @username 100`")
 
+# ========== АДМИНКИ ==========
 @dp.message(Command("addadmin"))
 async def cmd_addadmin(message: Message):
     if not await check_admin(message.from_user.id):
-        return await message.answer("🔒 Только админ")
-    parts = message.text.split()
+        await message.answer("🔒 Только администратор")
+        return    parts = message.text.split()
     if len(parts) != 2:
-        return await message.answer("📝 /addadmin @username")
+        await message.answer("📝 Использование: `/addadmin @username`", parse_mode="Markdown")
+        return
     try:
-        name = parts[1].replace("@", "")
+        target_input = parts[1].replace("@", "")
         async with aiosqlite.connect(DB_PATH) as db:
-            cursor = await db.execute('SELECT user_id, username FROM users WHERE username = ?', (name,))
-            target = await cursor.fetchone()
-        if not target:
-            return await message.answer(f"❌ @{name} не найден")
-        async with aiosqlite.connect(DB_PATH) as db:            await db.execute('UPDATE users SET is_admin = 1 WHERE user_id = ?', (target[0],))
+            cursor = await db.execute('SELECT user_id, username FROM users WHERE username = ?', (target_input,))
+            target_data = await cursor.fetchone()
+        if not target_data:
+            await message.answer(f"❌ Пользователь @{target_input} не найден.")
+            return
+        target_id, target_username = target_data
+        async with aiosqlite.connect(DB_PATH) as db:
+            await db.execute('UPDATE users SET is_admin = 1 WHERE user_id = ?', (target_id,))
             await db.commit()
-        await message.answer(f"✅ **@{target[1]}** теперь админ!", parse_mode="Markdown")
-    except Exception:
-        await message.answer("❌ Ошибка")
+        await message.answer(f"✅ **@{target_username}** назначен администратором!", parse_mode="Markdown")
+    except Exception as e:
+        await message.answer(f"❌ Ошибка: {e}")
 
 @dp.message(Command("removeadmin"))
 async def cmd_removeadmin(message: Message):
     if not await check_admin(message.from_user.id):
-        return await message.answer("🔒 Только админ")
+        await message.answer("🔒 Только администратор")
+        return
     parts = message.text.split()
     if len(parts) != 2:
-        return await message.answer("📝 /removeadmin @username")
+        await message.answer("📝 Использование: `/removeadmin @username`", parse_mode="Markdown")
+        return
     try:
-        name = parts[1].replace("@", "")
+        target_input = parts[1].replace("@", "")
         async with aiosqlite.connect(DB_PATH) as db:
-            cursor = await db.execute('SELECT user_id, username FROM users WHERE username = ?', (name,))
-            target = await cursor.fetchone()
-        if not target:
-            return await message.answer(f"❌ @{name} не найден")
+            cursor = await db.execute('SELECT user_id, username FROM users WHERE username = ?', (target_input,))
+            target_data = await cursor.fetchone()
+        if not target_data:
+            await message.answer(f" Пользователь @{target_input} не найден.")
+            return
+        target_id, target_username = target_data
         async with aiosqlite.connect(DB_PATH) as db:
-            await db.execute('UPDATE users SET is_admin = 0 WHERE user_id = ?', (target[0],))
+            await db.execute('UPDATE users SET is_admin = 0 WHERE user_id = ?', (target_id,))
             await db.commit()
-        await message.answer(f"✅ **@{target[1]}** снят с админки!", parse_mode="Markdown")
-    except Exception:
-        await message.answer("❌ Ошибка")
+        await message.answer(f"✅ **@{target_username}** снят с должности администратора.", parse_mode="Markdown")
+    except Exception as e:
+        await message.answer(f"❌ Ошибка: {e}")
 
+# ========== КНОПКИ ==========
 @dp.message(F.text == "💰 Баланс")
-async def btn_balance(m: Message):
-    await cmd_balance(m)
-
+async def btn_balance(message: Message):
+    await cmd_balance(message)
 @dp.message(F.text == "🎁 Награда")
-async def btn_claim(m: Message):
-    await cmd_claim(m)
+async def btn_claim(message: Message):
+    await cmd_claim(message)
 
 @dp.message(F.text == "📦 Каталог")
-async def btn_catalog(m: Message):
-    await cmd_catalog(m)
+async def btn_catalog(message: Message):
+    await cmd_catalog(message)
 
-@dp.message(F.text == "❓ Помощь")
-async def btn_help(m: Message):
-    await cmd_help(m)
+@dp.message(F.text == " Помощь")
+async def btn_help(message: Message):
+    await cmd_help(message)
 
+# ========== ЗАПУСК ==========
 async def main():
     await init_db()
-    logger.info("🤖 Бот запущен!")
+    logger.info("🤖 Бот запущен. Ожидание сообщений...")
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
