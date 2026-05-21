@@ -194,7 +194,8 @@ async def cmd_transfer(message: Message):
         target_id = target_data[0]
         
         if target_id == sender_id:
-            await message.answer("❌ Нельзя перевести самому себе.")            return
+            await message.answer("❌ Нельзя перевести самому себе.")
+            return
         
         async with aiosqlite.connect(DB_PATH) as db:
             await db.execute('UPDATE users SET balance = balance - ? WHERE user_id = ?', (amount, sender_id))
