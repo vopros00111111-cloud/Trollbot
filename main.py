@@ -117,7 +117,10 @@ async def cmd_transfer(message: Message):
             return
         
         await add_balance(target_id, amount)
-        
+       async def update_username(user_id: int, username: str):
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute('UPDATE users SET username = ? WHERE user_id = ?', (username, user_id))
+        await db.commit() 
         new_sender_balance = (await get_user_data(sender_id))[1]
         new_target_balance = (await get_user_data(target_id))[1]
         
