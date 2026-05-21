@@ -96,7 +96,8 @@ async def cmd_claim(message: Message):
         await register_user(user_id, message.from_user.username or f"user_{user_id}")
         data = await get_user_data(user_id)
     
-    _, balance, last_claim, _ = data    now = datetime.utcnow()
+    _, balance, last_claim, _ = data
+    now = datetime.utcnow()
     
     if last_claim:
         last_time = datetime.fromisoformat(last_claim)
