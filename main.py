@@ -42,14 +42,20 @@ def get_main_keyboard():
     keyboard = ReplyKeyboardMarkup(
         keyboard=[
             [KeyboardButton(text="💰 Баланс"), KeyboardButton(text="🎁 Награда")],
-            [KeyboardButton(text="❓ Помощь")]
+            [KeyboardButton(text="📦 Каталог"), KeyboardButton(text="❓ Помощь")]
         ],
         resize_keyboard=True
     )
     return keyboard
+
+# Обработчик кнопки
+@dp.message(F.text == "📦 Каталог")
+async def btn_catalog(message: Message):
+    await cmd_catalog(message)
 # ========== БАЗА ДАННЫХ ==========
 async def init_db():
     async with aiosqlite.connect(DB_PATH) as db:
+        # Таблица пользователей
         await db.execute('''
             CREATE TABLE IF NOT EXISTS users (
                 user_id INTEGER PRIMARY KEY,
@@ -57,6 +63,16 @@ async def init_db():
                 balance INTEGER DEFAULT 0,
                 last_claim TEXT,
                 is_admin INTEGER DEFAULT 0
+            )
+        ''')
+        # Таблица каталога
+        await db.execute('''
+            CREATE TABLE IF NOT EXISTS catalog (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT,
+                description TEXT,
+                price INTEGER,
+                image_url TEXT
             )
         ''')
         await db.commit()
@@ -89,6 +105,29 @@ async def check_admin(user_id: int) -> bool:
     if data and len(data) >= 4:
         return data[3] == 1
     return False
+# ========== КАТАЛОГ ==========
+async def add_to_catalog(name: str, description: str, price: int, image_url: str = None):
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            'INSERT INTO catalog (name, description, price, image_url) VALUES (?, ?, ?, ?)',
+            (name, description, price, image_url)
+        )
+        await db.commit()
+
+async def remove_from_catalog(item_id: int):
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute('DELETE FROM catalog WHERE id = ?', (item_id,))
+        await db.commit()
+
+async def get_catalog():
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute('SELECT id, name, description, price, image_url FROM catalog')
+        return await cursor.fetchall()
+
+async def get_catalog_item(item_id: int):
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute('SELECT id, name, description, price, image_url FROM catalog WHERE id = ?', (item_id,))
+        return await cursor.fetchone()
 
 # ========== КОМАНДЫ ==========
 @dp.message(Command("start"))
@@ -145,13 +184,21 @@ async def cmd_claim(message: Message):
 
 @dp.message(Command("help", "помощь"))
 async def cmd_help(message: Message):
-    await message.answer(        "📖 **Команды бота:**\n\n"
+    await message.answer(
+        "📖 **Команды бота:**\n\n"
+        "👤 **Основные:**\n"
         "/start — Регистрация\n"
         "/balance — Проверить баланс\n"
-        "/claim — Ежедневная награда (10 монет раз в 24ч)\n"
-        "/transfer @username <сумма> — Передать монеты\n"
+        "/claim — Ежедневная награда\n"
+        "/transfer @username <сумма> — Передать монеты\n\n"
+        "📦 **Каталог:**\n"
+        "/catalog — Показать товары\n"
+        "/myitems — Мои товары (админ)\n\n"
+        "👑 **Админ:**\n"
+        "/additem — Добавить товар\n"
+        "/removeitem <ID> — Удалить товар\n"
         "/addadmin @username — Назначить админа\n"
-        "/removeadmin @username — Снять админа\n"
+        "/removeadmin @username — Снять админа\n\n"
         "/help — Эта справка",
         parse_mode="Markdown"
     )
@@ -278,6 +325,93 @@ async def cmd_removeadmin(message: Message):
         
     except Exception as e:
         await message.answer(f"❌ Ошибка: {e}")
+# ========== КОМАНДЫ КАТАЛОГА ==========
+@dp.message(Command("catalog", "каталог"))
+async def cmd_catalog(message: Message):
+    items = await get_catalog()
+    
+    if not items:
+        await message.answer("📦 Каталог пуст")
+        return
+    
+    text = "📦 **КАТАЛОГ ТОВАРОВ:**\n\n"
+    
+    for item in items:
+        item_id, name, desc, price, image = item
+        text += f"🔹 **{name}**\n"
+        text += f"   {desc}\n"
+        text += f"   💰 Цена: {price} монет\n\n"
+    
+    await message.answer(text, parse_mode="Markdown")
+
+@dp.message(Command("additem"))
+async def cmd_additem(message: Message):
+    if not await check_admin(message.from_user.id):
+        await message.answer("🔒 Только администратор")
+        return
+    
+    # Формат: /additem Название|Описание|Цена|ссылка_на_фото
+    parts = message.text.split(maxsplit=1)
+    if len(parts) < 2:
+        await message.answer(
+            "📝 Использование:\n"
+            "`/additem Название|Описание|Цена|ссылка_на_фото`\n\n"
+            "Пример:\n"
+            "`/additem VIP статус|Доступ к VIP функциям|100|https://example.com/img.png`",
+            parse_mode="Markdown"
+        )
+        return
+    
+    try:
+        data = parts[1].split("|")
+        if len(data) < 3:
+            raise ValueError
+        
+        name = data[0].strip()
+        description = data[1].strip()
+        price = int(data[2].strip())
+        image_url = data[3].strip() if len(data) > 3 else None
+        
+        await add_to_catalog(name, description, price, image_url)
+        await message.answer(f"✅ Товар **{name}** добавлен в каталог!", parse_mode="Markdown")
+        
+    except (ValueError, IndexError):
+        await message.answer("❌ Ошибка формата. Проверь данные!")
+
+@dp.message(Command("removeitem"))
+async def cmd_removeitem(message: Message):
+    if not await check_admin(message.from_user.id):
+        await message.answer("🔒 Только администратор")
+        return
+    
+    parts = message.text.split()
+    if len(parts) != 2:
+        await message.answer("📝 Использование: `/removeitem <ID товара>`", parse_mode="Markdown")
+        return
+    
+    try:
+        item_id = int(parts[1])
+        await remove_from_catalog(item_id)
+        await message.answer(f"✅ Товар с ID {item_id} удалён!")
+    except ValueError:
+        await message.answer("❌ ID должен быть числом!")
+
+@dp.message(Command("myitems"))
+async def cmd_myitems(message: Message):
+    """Показать товары с ID для удаления"""
+    items = await get_catalog()
+    
+    if not items:
+        await message.answer("📦 Каталог пуст")
+        return
+    
+    text = "📦 **КАТАЛОГ (для админа):**\n\n"
+    for item in items:
+        item_id, name, desc, price, _ = item
+        text += f"`{item_id}` — {name} ({price} монет)\n"
+    
+    text += "\nИспользуй `/removeitem <ID>` для удаления"
+    await message.answer(text, parse_mode="Markdown")
 
 # ========== КНОПКИ ==========
 @dp.message(F.text == "💰 Баланс")
