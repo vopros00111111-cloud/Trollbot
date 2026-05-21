@@ -52,16 +52,23 @@ async def init_db():
 
 async def register_user(user_id: int, username: str):
     async with aiosqlite.connect(DB_PATH) as db:
+        # Если ника нет, придумываем временный
+        clean_username = username.replace("@", "") if username else f"user_{user_id}"
+        
+        # 1. Создаем, если нет
         await db.execute(
             'INSERT OR IGNORE INTO users (user_id, username, balance) VALUES (?, ?, 0)',
-            (user_id, username)
+            (user_id, clean_username)
         )
+        # 2. Обновляем ник, если он сменился (важно для перевода!)
+        await db.execute('UPDATE users SET username = ? WHERE user_id = ?', (clean_username, user_id))
+        
         await db.commit()
 
 async def get_user_data(user_id: int):
     async with aiosqlite.connect(DB_PATH) as db:
         cursor = await db.execute('SELECT username, balance, last_claim FROM users WHERE user_id = ?', (user_id,))
-        return await cursor.fetchone()
+        return await cursor.fetchone()
 
 async def add_balance(user_id: int, amount: int):
     async with aiosqlite.connect(DB_PATH) as db:
