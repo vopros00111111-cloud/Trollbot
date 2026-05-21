@@ -55,7 +55,8 @@ async def init_db():
                 user_id INTEGER PRIMARY KEY,
                 username TEXT,
                 balance INTEGER DEFAULT 0,
-                last_claim TEXT
+                last_claim TEXT,
+                is_admin INTEGER DEFAULT 0
             )
         ''')
         await db.commit()
