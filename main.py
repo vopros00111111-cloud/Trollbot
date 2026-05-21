@@ -293,7 +293,8 @@ async def btn_help(message: Message):
     await cmd_help(message)
 
 # ========== ЗАПУСК ==========
-async def main():    await init_db()
+async def main():
+    await init_db()
     logger.info("🤖 Бот запущен. Ожидание сообщений...")
     await dp.start_polling(bot)
 
