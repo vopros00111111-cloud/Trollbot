@@ -96,7 +96,7 @@ async def cmd_start(message: Message):
     user_id = message.from_user.id
     username = message.from_user.username or f"user_{user_id}"
     await register_user(user_id, username)
-        await message.answer(
+    await message.answer(
         f"👋 Привет! Я Trollcoin Bot.\n\n"
         f"Используй кнопки внизу или команды:\n"
         f"/balance — баланс\n"
