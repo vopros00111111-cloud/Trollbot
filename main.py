@@ -463,12 +463,11 @@ async def cmd_givemoney(message: Message):
             parse_mode="Markdown"
         )
         
-        # Уведомление пользователю        
+        # Уведомление пользователю       
 try:
             await bot.send_message(
                 target_id,
-                f"🎁 Администратор выдал тебе **{amount}** монет!\n"
-                f"Твой баланс: **{new_balance}**",
+                f"🎁 Администратор выдал тебе **{amount}** монет!\nТвой баланс: **{new_balance}**",
                 parse_mode="Markdown"
             )
         except:
