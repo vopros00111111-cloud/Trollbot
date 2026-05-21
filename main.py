@@ -464,7 +464,7 @@ async def cmd_givemoney(message: Message):
         )
         
         # Уведомление пользователю        try:
-            await bot.send_message(
+        await bot.send_message(
                 target_id,
                 f"🎁 Администратор выдал тебе **{amount}** монет!\n"
                 f"Твой баланс: **{new_balance}**",
