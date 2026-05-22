@@ -241,15 +241,15 @@ async def cmd_transfer(message: Message):
 async def cmd_catalog(message: Message):
     items = await get_catalog()
     if not items:
-        await message.answer("📦 Каталог пуст")
-        return
-    text = "📦 **КАТАЛОГ ТОВАРОВ:**\n\n"
-    for item in items:        item_id, name, desc, price, image = item
-        text += f" • **{name}**\n"
-        text += f"   {desc}\n"
-        text += f"   💰 Цена: {price} монет\n\n"
-    await message.answer(text, parse_mode="Markdown")
-
+        return await message.answer("Каталог пуст")
+    
+    text = "КАТАЛОГ:\n\n"
+    for item in items:
+        name = item[1]
+        price = item[3]
+        text = text + name + " - " + str(price) + " монет\n"
+    
+    await message.answer(text)
 @dp.message(Command("additem"))
 async def cmd_additem(message: Message):
     if not await check_admin(message.from_user.id):
