@@ -38,7 +38,15 @@ bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 
 # ========== КНОПКИ ==========
-
+def get_main_keyboard():
+    keyboard = ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text="💰 Баланс"), KeyboardButton(text="🎁 Награда")],
+            [KeyboardButton(text="📦 Каталог"), KeyboardButton(text="❓ Помощь")]
+        ],
+        resize_keyboard=True
+    )
+    return keyboard
 # ========== БАЗА ДАННЫХ ==========
 async def init_db():
     async with aiosqlite.connect(DB_PATH) as db:
@@ -415,6 +423,20 @@ async def cmd_removeadmin(message: Message):
         await message.answer(f"❌ Ошибка: {e}")
 
 # ========== КНОПКИ ==========
+@dp.message(F.text == "💰 Баланс")
+async def btn_balance(message: Message):
+    await cmd_balance(message)
+@dp.message(F.text == "🎁 Награда")
+async def btn_claim(message: Message):
+    await cmd_claim(message)
+
+@dp.message(F.text == "📦 Каталог")
+async def btn_catalog(message: Message):
+    await cmd_catalog(message)
+
+@dp.message(F.text == "❓ Помощь")
+async def btn_help(message: Message):
+    await cmd_help(message)
 
 # ========== ЗАПУСК ==========
 async def main():
