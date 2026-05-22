@@ -106,7 +106,7 @@ async def cmd_start(message: Message):
     user_id = message.from_user.id
     username = message.from_user.username or f"user_{user_id}"
     await register_user(user_id, username)
-    await message.answer("👋 Привет! Trollcoin Bot.\n/balance, /claim, /help", reply_markup=get_main_keyboard())
+    await message.answer("👋 Привет! Я 𝗕𝗹𝗲𝘀𝘀𝗖𝗼𝗶𝗻 bot.\n/balance, /claim, /help", reply_markup=get_main_keyboard())
 
 @dp.message(Command("balance"))
 async def cmd_balance(message: Message):
@@ -243,7 +243,8 @@ async def cmd_takemoney(message: Message):
     except:
         await message.answer("Ошибка")
 
-@dp.message(Command("addadmin"))async def cmd_addadmin(message: Message):
+@dp.message(Command("addadmin"))
+async def cmd_addadmin(message: Message):
     if not await check_admin(message.from_user.id):
         return await message.answer("🔒 Только админ")
     parts = message.text.split()
