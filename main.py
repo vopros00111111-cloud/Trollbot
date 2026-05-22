@@ -106,8 +106,14 @@ async def cmd_start(message: Message):
     user_id = message.from_user.id
     username = message.from_user.username or f"user_{user_id}"
     await register_user(user_id, username)
-    await message.answer("👋 Привет! Я 𝗕𝗹𝗲𝘀𝘀𝗖𝗼𝗶𝗻 bot.\n/balance, /claim, /help", reply_markup=get_main_keyboard())
-
+    text = "👋 Привет! Я 𝗕𝗹𝗲𝘀𝘀𝗖𝗼𝗶𝗻 Bot.\n\n"
+    text += "📋 **Доступные команды:**\n"
+    text += "/balance — проверить баланс\n"
+    text += "/claim — ежедневная награда\n"
+    text += "/transfer — перевести монеты\n"
+    text += "/catalog — магазин товаров\n"
+    text += "/help — полная справка"
+    await message.answer(text, reply_markup=get_main_keyboard(), parse_mode="Markdown")
 @dp.message(Command("balance"))
 async def cmd_balance(message: Message):
     data = await get_user_data(message.from_user.id)
@@ -140,8 +146,23 @@ async def cmd_claim(message: Message):
 
 @dp.message(Command("help"))
 async def cmd_help(message: Message):
-    await message.answer("/start, /balance, /claim, /transfer, /catalog\n\nАдмин: /givemoney, /takemoney, /additem, /removeitem")
-
+    text = "📖 **СПРАВОЧНИК КОМАНД**\n\n"
+    text += "👤 **Основные:**\n"
+    text += "/start — начать работу\n"
+    text += "/balance — баланс\n"
+    text += "/claim — награда (раз в 24ч)\n"
+    text += "/transfer @user сумма — перевод\n\n"
+    text += "📦 **Каталог:**\n"
+    text += "/catalog — товары\n"
+    text += "/myitems — мои товары\n\n"
+    text += "👑 **Админ:**\n"
+    text += "/givemoney @user сумма\n"
+    text += "/takemoney @user сумма\n"
+    text += "/additem Название|Описание|Цена\n"
+    text += "/removeitem ID\n"
+    text += "/addadmin @user\n"
+    text += "/removeadmin @user"
+    await message.answer(text, parse_mode="Markdown")
 @dp.message(Command("transfer"))
 async def cmd_transfer(message: Message):
     parts = message.text.split()
@@ -178,15 +199,26 @@ async def cmd_catalog(message: Message):
 @dp.message(Command("additem"))
 async def cmd_additem(message: Message):
     if not await check_admin(message.from_user.id):
-        return
+        return await message.answer("🔒 Только админ")
+    
     parts = message.text.split(maxsplit=1)
     if len(parts) < 2:
-        return
-    d = parts[1].split("|")
-    if len(d) < 3:
-        return
-    await add_to_catalog(d[0], d[1], int(d[2]), d[3] if len(d) > 3 else None)
-    await message.answer("✅ Добавлено")
+        return await message.answer("📝 /additem Название|Описание|Цена|ссылка")
+    
+    try:
+        d = parts[1].split("|")
+        if len(d) < 3:
+            return await message.answer("❌ Формат: Название|Описание|Цена")
+        
+        name = d[0].strip()
+        description = d[1].strip()
+        price = int(d[2].strip())
+        image_url = d[3].strip() if len(d) > 3 else None
+        
+        await add_to_catalog(name, description, price, image_url)
+        await message.answer(f"✅ Товар **{name}** добавлен!", parse_mode="Markdown")
+    except Exception as e:
+        await message.answer(f"❌ Ошибка: {e}")
 @dp.message(Command("removeitem"))
 async def cmd_removeitem(message: Message):
     if not await check_admin(message.from_user.id):
