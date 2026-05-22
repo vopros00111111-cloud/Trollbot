@@ -77,11 +77,12 @@ async def register_user(user_id: int, username: str):
             'INSERT OR IGNORE INTO users (user_id, username, balance, is_admin) VALUES (?, ?, 0, 0)',
             (user_id, clean_username)
         )
-        await db.execute('UPDATE users SET username = ? WHERE user_id = ?', (clean_username, user_id))
-        await db.commit()
+    await db.execute('UPDATE users SET username = ? WHERE user_id = ?', (clean_username, user_id))
+    await db.commit()
 
 async def get_user_data(user_id: int):
     async with aiosqlite.connect(DB_PATH) as db:
+        # Добавлено is_admin в запрос
         cursor = await db.execute('SELECT username, balance, last_claim, is_admin FROM users WHERE user_id = ?', (user_id,))
         return await cursor.fetchone()
 
@@ -369,6 +370,9 @@ async def cmd_takemoney(message: Message):
         await message.answer("❌ Ошибка формата")
 
 # ========== АДМИНКИ ==========
+@dp.message(Command("test"))
+async def cmd_test(message: Message):
+    await message.answer("ТЕСТ РАБОТАЕТ!")
 @dp.message(Command("addadmin", "+admin"))
 async def cmd_addadmin(message: Message):
     if not await check_admin(message.from_user.id):
