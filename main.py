@@ -245,7 +245,7 @@ async def cmd_catalog(message: Message):
         return
     text = "📦 **КАТАЛОГ ТОВАРОВ:**\n\n"
     for item in items:        item_id, name, desc, price, image = item
-        text += f"🔹 **{name}**\n"
+        text += f" • **{name}**\n"
         text += f"   {desc}\n"
         text += f"   💰 Цена: {price} монет\n\n"
     await message.answer(text, parse_mode="Markdown")
