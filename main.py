@@ -374,7 +374,8 @@ async def cmd_takemoney(message: Message):
 async def cmd_addadmin(message: Message):
     if not await check_admin(message.from_user.id):
         await message.answer("🔒 Только администратор")
-        return    parts = message.text.split()
+        parts = message.text.split()
+        return parts
     if len(parts) != 2:
         await message.answer("📝 Использование: `/addadmin @username`", parse_mode="Markdown")
         return
