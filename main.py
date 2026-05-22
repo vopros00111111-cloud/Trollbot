@@ -370,30 +370,32 @@ async def cmd_takemoney(message: Message):
         await message.answer("❌ Ошибка формата")
 
 # ========== АДМИНКИ ==========
-@dp.message(Command("test"))
-async def cmd_test(message: Message):
-    await message.answer("ТЕСТ РАБОТАЕТ!")
-@dp.message(Command("addadmin", "+admin"))
+@dp.message(Command("addadmin"))
 async def cmd_addadmin(message: Message):
+    await message.answer(f"DEBUG: Твой ID: {message.from_user.id}")
+    
     if not await check_admin(message.from_user.id):
-        await message.answer("🔒 Только администратор")
-        parts = message.text.split()
+        return await message.answer("🔒 Только админ")
+    
+    parts = message.text.split()
     if len(parts) != 2:
-        await message.answer("📝 Использование: `/addadmin @username`", parse_mode="Markdown")
-        return
+        return await message.answer("📝 /addadmin @username")
+    
     try:
         target_input = parts[1].replace("@", "")
         async with aiosqlite.connect(DB_PATH) as db:
             cursor = await db.execute('SELECT user_id, username FROM users WHERE username = ?', (target_input,))
             target_data = await cursor.fetchone()
+        
         if not target_data:
-            await message.answer(f"❌ Пользователь @{target_input} не найден.")
-            return
+            return await message.answer(f"❌ @{target_input} не найден")
+        
         target_id, target_username = target_data
         async with aiosqlite.connect(DB_PATH) as db:
             await db.execute('UPDATE users SET is_admin = 1 WHERE user_id = ?', (target_id,))
             await db.commit()
-        await message.answer(f"✅ **@{target_username}** назначен администратором!", parse_mode="Markdown")
+        
+        await message.answer(f"✅ @{target_username} — админ!")
     except Exception as e:
         await message.answer(f"❌ Ошибка: {e}")
 
