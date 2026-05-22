@@ -372,8 +372,6 @@ async def cmd_takemoney(message: Message):
 # ========== АДМИНКИ ==========
 @dp.message(Command("addadmin"))
 async def cmd_addadmin(message: Message):
-    await message.answer(f"DEBUG: Твой ID: {message.from_user.id}")
-    
     if not await check_admin(message.from_user.id):
         return await message.answer("🔒 Только админ")
     
