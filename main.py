@@ -194,7 +194,8 @@ async def cmd_removeitem(message: Message):
         return
     parts = message.text.split()
     if len(parts) != 2:
-        return    try:
+        return    
+        try:
         await remove_from_catalog(int(parts[1]))
         await message.answer("✅ Удалено")
     except:
