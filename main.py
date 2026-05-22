@@ -194,7 +194,8 @@ async def cmd_help(message: Message):
 @dp.message(Command("transfer", "передать"))
 async def cmd_transfer(message: Message):
     parts = message.text.split()
-    if len(parts) != 3:        await message.answer("📝 Использование: `/transfer @username <сумма>`", parse_mode="Markdown")
+    if len(parts) != 3:
+        await message.answer("📝 Использование: `/transfer @username <сумма>`", parse_mode="Markdown")
         return
     try:
         target_username = parts[1].replace("@", "")
