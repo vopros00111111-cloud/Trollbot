@@ -71,11 +71,14 @@ async def init_db():
         await db.commit()
 
 async def register_user(user_id: int, username: str):
+    clean_username = username.replace("@", "") if username else f"user_{user_id}"
     async with aiosqlite.connect(DB_PATH) as db:
-        clean_username = username.replace("@", "") if username else f"user_{user_id}"
         await db.execute(
             'INSERT OR IGNORE INTO users (user_id, username, balance, is_admin) VALUES (?, ?, 0, 0)',
             (user_id, clean_username)
+        )
+        await db.execute('UPDATE users SET username = ? WHERE user_id = ?', (clean_username, user_id))
+        await db.commit()
         )
     await db.execute('UPDATE users SET username = ? WHERE user_id = ?', (clean_username, user_id))
     await db.commit()
