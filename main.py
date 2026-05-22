@@ -293,7 +293,8 @@ async def cmd_myitems(message: Message):
     items = await get_catalog()
     if not items:
         await message.answer("📦 Каталог пуст")
-        return    text = "📦 **КАТАЛОГ (для админа):**\n\n"
+        text = "📦 **КАТАЛОГ (для админа):**\n\n"
+        return text
     for item in items:
         item_id, name, desc, price, _ = item
         text += f"`{item_id}` — {name} ({price} монет)\n"
