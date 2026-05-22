@@ -38,15 +38,7 @@ bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 
 # ========== КНОПКИ ==========
-def get_main_keyboard():
-    keyboard = ReplyKeyboardMarkup(
-        keyboard=[
-            [KeyboardButton(text="💰 Баланс"), KeyboardButton(text="🎁 Награда")],
-            [KeyboardButton(text="📦 Каталог"), KeyboardButton(text="❓ Помощь")]
-        ],
-        resize_keyboard=True
-    )
-    return keyboard
+
 # ========== БАЗА ДАННЫХ ==========
 async def init_db():
     async with aiosqlite.connect(DB_PATH) as db:
