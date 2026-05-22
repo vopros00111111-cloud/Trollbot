@@ -79,8 +79,6 @@ async def register_user(user_id: int, username: str):
         )
         await db.execute('UPDATE users SET username = ? WHERE user_id = ?', (clean_username, user_id))
         await db.commit()
-    await db.execute('UPDATE users SET username = ? WHERE user_id = ?', (clean_username, user_id))
-    await db.commit()
 
 async def get_user_data(user_id: int):
     async with aiosqlite.connect(DB_PATH) as db:
