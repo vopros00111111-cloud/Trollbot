@@ -187,15 +187,14 @@ async def cmd_additem(message: Message):
         return
     await add_to_catalog(d[0], d[1], int(d[2]), d[3] if len(d) > 3 else None)
     await message.answer("✅ Добавлено")
-
 @dp.message(Command("removeitem"))
 async def cmd_removeitem(message: Message):
     if not await check_admin(message.from_user.id):
         return
     parts = message.text.split()
     if len(parts) != 2:
-        return    
-        try:
+        return await message.answer(" /removeitem ID")
+    try:
         await remove_from_catalog(int(parts[1]))
         await message.answer("✅ Удалено")
     except:
