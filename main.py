@@ -293,7 +293,8 @@ async def btn_claim(m):
 async def btn_catalog(m):
     await cmd_catalog(m)
 
-@dp.message(F.text == "❓ Помощь")async def btn_help(m):
+@dp.message(F.text == "❓ Помощь")
+async def btn_help(m):
     await cmd_help(m)
 
 async def main():
