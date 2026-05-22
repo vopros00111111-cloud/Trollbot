@@ -191,7 +191,7 @@ async def cmd_help(message: Message):
         parse_mode="Markdown"
     )
 
-@dp.message(Command("transfer"))
+@dp.message(Command("transfer", "передать"))
 async def cmd_transfer(message: Message):
     parts = message.text.split()
     if len(parts) != 3:        await message.answer("📝 Использование: `/transfer @username <сумма>`", parse_mode="Markdown")
@@ -303,90 +303,72 @@ async def cmd_myitems(message: Message):
 @dp.message(Command("givemoney"))
 async def cmd_givemoney(message: Message):
     if not await check_admin(message.from_user.id):
-        await message.answer("🔒 Только администратор")
+        await message.answer("🔒 Только админ")
         return
-    
     parts = message.text.split()
     if len(parts) != 3:
-        await message.answer("📝 Использование: `/givemoney @username сумма`", parse_mode="Markdown")
+        await message.answer("📝 /givemoney @username сумма")
         return
-    
     try:
-        target_username = parts[1].replace("@", "")
+        target_name = parts[1].replace("@", "")
         amount = int(parts[2])
         if amount <= 0:
-            await message.answer("⛔ Сумма должна быть больше 0")
+            await message.answer("⛔ Сумма > 0")
             return
-        
         async with aiosqlite.connect(DB_PATH) as db:
-            cursor = await db.execute('SELECT user_id, username, balance FROM users WHERE username = ?', (target_username,))
-            target_data = await cursor.fetchone()
-        
-        if not target_data:
-            await message.answer(f"❌ Пользователь @{target_username} не найден")
+            cursor = await db.execute('SELECT user_id, username, balance FROM users WHERE username = ?', (target_name,))
+            target = await cursor.fetchone()
+        if not target:
+            await message.answer(f"❌ @{target_name} не найден")
             return
-        
-        target_id, target_username, old_balance = target_data
-        await add_balance(target_id, amount)
-        new_balance = old_balance + amount
-        
-        await message.answer(f"✅ Выдано **{amount}** монет пользователю **@{target_username}**\nБаланс до: {old_balance}\nБаланс после: {new_balance}", parse_mode="Markdown")
-        
+        await add_balance(target[0], amount)
+        new_bal = target[2] + amount
+        await message.answer(f"✅ Выдано **{amount}** монет @{target[1]}\nБаланс: {new_bal}", parse_mode="Markdown")
         try:
-            await bot.send_message(target_id, f" Администратор выдал тебе **{amount}** монет!\nТвой баланс: **{new_balance}**", parse_mode="Markdown")
-        except:
+            await bot.send_message(target[0], f"🎁 Админ выдал **{amount}** монет!\nБаланс: **{new_bal}**", parse_mode="Markdown")
+        except Exception:
             pass
     except ValueError:
-        await message.answer("❌ Неверный формат. Пример: `/givemoney @username 100`")
+        await message.answer("❌ Ошибка формата")
 
 @dp.message(Command("takemoney", "removemoney"))
 async def cmd_takemoney(message: Message):
-    if not await check_admin(message.from_user.id):        await message.answer("🔒 Только администратор")
+    if not await check_admin(message.from_user.id):
+        await message.answer("🔒 Только админ")
         return
-    
     parts = message.text.split()
     if len(parts) != 3:
-        await message.answer("📝 Использование: `/takemoney @username сумма`", parse_mode="Markdown")
+        await message.answer("📝 /takemoney @username сумма")
         return
-    
     try:
-        target_username = parts[1].replace("@", "")
+        target_name = parts[1].replace("@", "")
         amount = int(parts[2])
         if amount <= 0:
-            await message.answer("⛔ Сумма должна быть больше 0")
+            await message.answer("⛔ Сумма > 0")
             return
-        
         async with aiosqlite.connect(DB_PATH) as db:
-            cursor = await db.execute('SELECT user_id, username, balance FROM users WHERE username = ?', (target_username,))
-            target_data = await cursor.fetchone()
-        
-        if not target_data:
-            await message.answer(f"❌ Пользователь @{target_username} не найден")
+            cursor = await db.execute('SELECT user_id, username, balance FROM users WHERE username = ?', (target_name,))
+            target = await cursor.fetchone()
+        if not target:
+            await message.answer(f"❌ @{target_name} не найден")
             return
-        
-        target_id, target_username, old_balance = target_data
-        
-        if old_balance < amount:
-            await message.answer(f"❌ У пользователя недостаточно монет\nБаланс: {old_balance}, нужно списать: {amount}")
+        if target[2] < amount:
+            await message.answer(f"❌ Мало денег ({target[2]})")
             return
-        
         async with aiosqlite.connect(DB_PATH) as db:
-            await db.execute('UPDATE users SET balance = balance - ? WHERE user_id = ?', (amount, target_id))
+            await db.execute('UPDATE users SET balance = balance - ? WHERE user_id = ?', (amount, target[0]))
             await db.commit()
-        
-        new_balance = old_balance - amount
-        
-        await message.answer(f"✅ Списано **{amount}** монет у пользователя **@{target_username}**\nБаланс до: {old_balance}\nБаланс после: {new_balance}", parse_mode="Markdown")
-        
+        new_bal = target[2] - amount
+        await message.answer(f"✅ Списано **{amount}** монет у @{target[1]}\nБаланс: {new_bal}", parse_mode="Markdown")
         try:
-            await bot.send_message(target_id, f"⚠️ Администратор списал **{amount}** монет\nТвой баланс: **{new_balance}**", parse_mode="Markdown")
-        except:
+            await bot.send_message(target[0], f"⚠️ Админ списал **{amount}** монет!\nБаланс: **{new_bal}**", parse_mode="Markdown")
+        except Exception:
             pass
     except ValueError:
-        await message.answer("❌ Неверный формат. Пример: `/takemoney @username 100`")
+        await message.answer("❌ Ошибка формата")
 
 # ========== АДМИНКИ ==========
-@dp.message(Command("addadmin"))
+@dp.message(Command("addadmin", "+admin"))
 async def cmd_addadmin(message: Message):
     if not await check_admin(message.from_user.id):
         await message.answer("🔒 Только администратор")
