@@ -176,10 +176,9 @@ async def cmd_help(message: Message):
         "/start — Регистрация\n"
         "/balance — Проверить баланс\n"
         "/claim — Ежедневная награда\n"
-        "/transfer @username <сумма> — Передать монеты\n\n"
+        "/transfer (/передать) @username <сумма> — Передать монеты\n\n"
         "📦 **Каталог:**\n"
         "/catalog — Показать товары\n"
-        "/myitems — Мои товары (админ)\n\n"
         "👑 **Админ:**\n"
         "/givemoney @username <сумма> — Выдать монеты\n"
         "/takemoney @username <сумма> — Забрать монеты\n"
@@ -375,7 +374,6 @@ async def cmd_addadmin(message: Message):
     if not await check_admin(message.from_user.id):
         await message.answer("🔒 Только администратор")
         parts = message.text.split()
-        return parts
     if len(parts) != 2:
         await message.answer("📝 Использование: `/addadmin @username`", parse_mode="Markdown")
         return
@@ -432,7 +430,7 @@ async def btn_claim(message: Message):
 async def btn_catalog(message: Message):
     await cmd_catalog(message)
 
-@dp.message(F.text == " Помощь")
+@dp.message(F.text == "❓ Помощь")
 async def btn_help(message: Message):
     await cmd_help(message)
 
