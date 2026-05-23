@@ -155,12 +155,12 @@ async def cmd_help(message: Message):
     text += "📦 **Каталог:**\n"
     text += "/catalog — товары\n"
     text += "👑 **Админ:**\n"
-    text += "/givemoney @user сумма\n"
-    text += "/takemoney @user сумма\n"
-    text += "/additem Название|Описание|Цена\n"
-    text += "/removeitem ID\n"
-    text += "/addadmin @user назначить админа\n"
-    text += "/removeadmin @user снять админа"
+    text += "/givemoney @user сумма — добавление монет пользователю\n"
+    text += "/takemoney @user сумма — удаление монет у пользователя\n"
+    text += "/additem Название|Описание|Цена — добавление товара\n"
+    text += "/removeitem ID — удаление товара\n"
+    text += "/addadmin @user —  назначить админа\n"
+    text += "/removeadmin @user — снять админа"
     await message.answer(text, parse_mode="Markdown")
 @dp.message(Command("transfer"))
 async def cmd_transfer(message: Message):
