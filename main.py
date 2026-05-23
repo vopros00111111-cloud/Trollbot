@@ -328,8 +328,12 @@ async def cmd_removeadmin(message: Message):
         await message.answer(f"❌ Ошибка: {e}")
 
 @dp.message(F.text == "💰 Баланс")
-async def btn_balance(m):
-    await cmd_balance(m)
+async def btn_balance(message: Message):
+    # Показываем свой баланс (как старая версия функции)
+    data = await get_user_data(message.from_user.id)
+    if not data:
+        return await cmd_start(message)
+    await message.answer(f"💰 Твой баланс: **{data['balance']}** монет", parse_mode="Markdown")
 
 @dp.message(F.text == "🎁 Награда")
 async def btn_claim(m):
