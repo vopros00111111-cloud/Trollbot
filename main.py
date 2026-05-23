@@ -114,12 +114,27 @@ async def cmd_start(message: Message):
     text += "/catalog — магазин товаров\n"
     text += "/help — полная справка"
     await message.answer(text, reply_markup=get_main_keyboard(), parse_mode="Markdown")
+    
 @dp.message(Command("balance"))
 async def cmd_balance(message: Message):
-    data = await get_user_data(message.from_user.id)
-    if not data:
-        return await cmd_start(message)
-    await message.answer(f"💰 Баланс: **{data['balance']}**", parse_mode="Markdown")
+    parts = message.text.split()
+    
+    # Если указали юзернейм другого человека
+    if len(parts) > 1:
+        target_username = parts[1].replace("@", "")
+        async with pool.acquire() as conn:
+            row = await conn.fetchrow("SELECT username, balance FROM users WHERE username = $1", target_username)
+        
+        if not row:
+            return await message.answer(f"❌ Пользователь @{target_username} не найден.")
+        
+        await message.answer(f"💰 Баланс **@{row['username']}**: **{row['balance']}** монет", parse_mode="Markdown")
+    else:
+        # Проверка своего баланса
+        data = await get_user_data(message.from_user.id)
+        if not data:
+            return await cmd_start(message)
+        await message.answer(f"💰 Твой баланс: **{data['balance']}** монет", parse_mode="Markdown")
 
 @dp.message(Command("claim"))
 async def cmd_claim(message: Message):
