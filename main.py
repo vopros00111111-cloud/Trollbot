@@ -180,7 +180,8 @@ async def cmd_help(message: Message):
 @dp.message(Command("transfer"))
 async def cmd_transfer(message: Message):
     parts = message.text.split()
-    if len(parts) != 3:        return await message.answer("/transfer @user сумма")
+    if len(parts) != 3:
+        return await message.answer("/transfer @user сумма")
     try:
         target = parts[1].replace("@", "")
         amount = int(parts[2])
@@ -190,15 +191,32 @@ async def cmd_transfer(message: Message):
         sender_data = await get_user_data(sender)
         if not sender_data or sender_data['balance'] < amount:
             return await message.answer("Недостаточно средств")
+        
         async with pool.acquire() as conn:
-            t = await conn.fetchrow('SELECT user_id FROM users WHERE username = $1', target)
+            t = await conn.fetchrow('SELECT user_id, username, balance FROM users WHERE username = $1', target)
             if not t or t['user_id'] == sender:
                 return await message.answer("Ошибка")
+            
             await conn.execute('UPDATE users SET balance = balance - $1 WHERE user_id = $2', amount, sender)
             await conn.execute('UPDATE users SET balance = balance + $1 WHERE user_id = $2', amount, t['user_id'])
-        await message.answer(f"✅ {amount} монет переведено")
-    except:
-        await message.answer("Ошибка")
+        
+        new_sender_bal = sender_data['balance'] - amount
+        new_target_bal = t['balance'] + amount
+        
+        # Уведомление отправителю
+        await message.answer(f"✅ Переведено **{amount}** монет @{t['username']}\nТвой баланс: **{new_sender_bal}**", parse_mode="Markdown")
+        
+        # Уведомление получателю
+        try:
+            await bot.send_message(
+                t['user_id'],
+                f"💸 Тебе перевели **{amount}** монет от @{sender_data['username'] or message.from_user.id}!\nНовый баланс: **{new_target_bal}**",
+                parse_mode="Markdown"
+            )
+        except:
+            pass
+    except Exception as e:
+        await message.answer(f"❌ Ошибка: {e}")
 
 @dp.message(Command("catalog"))
 async def cmd_catalog(message: Message):
@@ -249,7 +267,7 @@ async def cmd_removeitem(message: Message):
 @dp.message(Command("givemoney"))
 async def cmd_givemoney(message: Message):
     if not await check_admin(message.from_user.id):
-        return await message.answer("🔒")
+        return await message.answer("🔒 Только админ")
     parts = message.text.split()
     if len(parts) != 3:
         return await message.answer("/givemoney @user сумма")
@@ -257,20 +275,35 @@ async def cmd_givemoney(message: Message):
         name = parts[1].replace("@", "")
         amount = int(parts[2])
         if amount <= 0:
-            return
+            return await message.answer("Сумма > 0")
+        
         async with pool.acquire() as conn:
             t = await conn.fetchrow('SELECT user_id, username, balance FROM users WHERE username = $1', name)
         if not t:
             return await message.answer("Не найден")
+        
         await add_balance(t['user_id'], amount)
-        await message.answer(f"✅ Выдано {amount} монет @{t['username']}")
-    except:
-        await message.answer("Ошибка")
+        new_bal = t['balance'] + amount
+        
+        # Уведомление админу
+        await message.answer(f"✅ Выдано {amount} монет @{t['username']}\nБаланс: {new_bal}")
+        
+        # Уведомление получателю
+        try:
+            await bot.send_message(
+                t['user_id'],
+                f"🎁 Администратор выдал тебе **{amount}** монет!\nНовый баланс: **{new_bal}**",
+                parse_mode="Markdown"
+            )
+        except:
+            pass
+    except Exception as e:
+        await message.answer(f"❌ Ошибка: {e}")
 
 @dp.message(Command("takemoney"))
 async def cmd_takemoney(message: Message):
     if not await check_admin(message.from_user.id):
-        return await message.answer("🔒")
+        return await message.answer("🔒 Только админ")
     parts = message.text.split()
     if len(parts) != 3:
         return await message.answer("/takemoney @user сумма")
@@ -278,17 +311,33 @@ async def cmd_takemoney(message: Message):
         name = parts[1].replace("@", "")
         amount = int(parts[2])
         if amount <= 0:
-            return
+            return await message.answer("Сумма > 0")
+        
         async with pool.acquire() as conn:
             t = await conn.fetchrow('SELECT user_id, username, balance FROM users WHERE username = $1', name)
         if not t or t['balance'] < amount:
             return await message.answer("Ошибка")
+        
         async with pool.acquire() as conn:
             await conn.execute('UPDATE users SET balance = balance - $1 WHERE user_id = $2', amount, t['user_id'])
-        await message.answer(f"✅ Списано {amount} монет")
-    except:
-        await message.answer("Ошибка")
-
+        
+        new_bal = t['balance'] - amount
+        
+        # Уведомление админу
+        await message.answer(f"✅ Списано {amount} монет у @{t['username']}\nБаланс: {new_bal}")
+        
+        # Уведомление пользователю
+        try:
+            await bot.send_message(
+                t['user_id'],
+                f"⚠️ Администратор списал **{amount}** монет!\nНовый баланс: **{new_bal}**",
+                parse_mode="Markdown"
+            )
+        except:
+            pass
+    except Exception as e:
+        await message.answer(f"❌ Ошибка: {e}")
+        
 @dp.message(Command("addadmin"))
 async def cmd_addadmin(message: Message):
     if not await check_admin(message.from_user.id):
@@ -302,9 +351,22 @@ async def cmd_addadmin(message: Message):
             target_data = await conn.fetchrow('SELECT user_id, username FROM users WHERE username = $1', target_input)
         if not target_data:
             return await message.answer(f"❌ @{target_input} не найден")
+        
         async with pool.acquire() as conn:
             await conn.execute('UPDATE users SET is_admin = 1 WHERE user_id = $1', target_data['user_id'])
-        await message.answer(f"✅ @{target_data['username']} — админ!")
+        
+        # Уведомление админу
+        await message.answer(f"✅ @{target_data['username']} назначен админом!")
+        
+        # Уведомление новому админу
+        try:
+            await bot.send_message(
+                target_data['user_id'],
+                f"👑 Поздравляем! Ты назначен **администратором** бота!\nТеперь доступны команды: /givemoney, /takemoney, /additem, /removeitem, /addadmin, /removeadmin",
+                parse_mode="Markdown"
+            )
+        except:
+            pass
     except Exception as e:
         await message.answer(f"❌ Ошибка: {e}")
 
@@ -321,9 +383,22 @@ async def cmd_removeadmin(message: Message):
             target_data = await conn.fetchrow('SELECT user_id, username FROM users WHERE username = $1', target_input)
         if not target_data:
             return await message.answer(f"❌ @{target_input} не найден")
+        
         async with pool.acquire() as conn:
             await conn.execute('UPDATE users SET is_admin = 0 WHERE user_id = $1', target_data['user_id'])
-        await message.answer(f"✅ @{target_data['username']} снят!")
+        
+        # Уведомление админу
+        await message.answer(f"✅ @{target_data['username']} снят с должности админа.")
+        
+        # Уведомление пользователю
+        try:
+            await bot.send_message(
+                target_data['user_id'],
+                f"⚠️ Ты **снят** с должности администратора.",
+                parse_mode="Markdown"
+            )
+        except:
+            pass
     except Exception as e:
         await message.answer(f"❌ Ошибка: {e}")
 
