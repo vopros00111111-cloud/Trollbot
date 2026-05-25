@@ -36,12 +36,6 @@ dp = Dispatcher()
 # Глобальный пул соединений
 pool = None
 
-def get_main_keyboard():
-    return ReplyKeyboardMarkup(keyboard=[
-        [KeyboardButton(text="💰 Баланс"), KeyboardButton(text="🎁 Награда")],
-        [KeyboardButton(text="📦 Каталог"), KeyboardButton(text="❓ Помощь")]
-    ], resize_keyboard=True)
-
 async def init_db():
     global pool
     pool = await asyncpg.create_pool(DATABASE_URL)
@@ -401,26 +395,6 @@ async def cmd_removeadmin(message: Message):
             pass
     except Exception as e:
         await message.answer(f"❌ Ошибка: {e}")
-
-@dp.message(F.text == "💰 Баланс")
-async def btn_balance(message: Message):
-    # Показываем свой баланс (как старая версия функции)
-    data = await get_user_data(message.from_user.id)
-    if not data:
-        return await cmd_start(message)
-    await message.answer(f"💰 Твой баланс: **{data['balance']}** монет", parse_mode="Markdown")
-
-@dp.message(F.text == "🎁 Награда")
-async def btn_claim(m):
-    await cmd_claim(m)
-
-@dp.message(F.text == "📦 Каталог")
-async def btn_catalog(m):
-    await cmd_catalog(m)
-
-@dp.message(F.text == "❓ Помощь")
-async def btn_help(m):
-    await cmd_help(m)
 
 async def main():
     await init_db()
