@@ -100,14 +100,14 @@ async def cmd_start(message: Message):
     user_id = message.from_user.id
     username = message.from_user.username or f"user_{user_id}"
     await register_user(user_id, username)
-    text = "👋 Привет! Я 𝗕𝗹𝗲𝘀𝘀𝗖𝗼𝗶𝗻 Bot.\n\n"
+    text = "👋 Привет! Я Trollcoin Bot.\n\n"
     text += "📋 **Доступные команды:**\n"
     text += "/balance — проверить баланс\n"
     text += "/claim — ежедневная награда\n"
     text += "/transfer — перевести монеты\n"
     text += "/catalog — магазин товаров\n"
     text += "/help — полная справка"
-    await message.answer(text, reply_markup=get_main_keyboard(), parse_mode="Markdown")
+    await message.answer(text, parse_mode="Markdown")
     
 @dp.message(Command("balance"))
 async def cmd_balance(message: Message):
