@@ -41,7 +41,8 @@ async def init_db():
     pool = await asyncpg.create_pool(DATABASE_URL)
     async with pool.acquire() as conn:
         await conn.execute('''
-            CREATE TABLE IF NOT EXISTS users (                user_id BIGINT PRIMARY KEY,
+            CREATE TABLE IF NOT EXISTS users (
+                user_id BIGINT PRIMARY KEY,
                 username TEXT,
                 balance INTEGER DEFAULT 0,
                 last_claim TEXT,
@@ -55,6 +56,17 @@ async def init_db():
                 description TEXT,
                 price INTEGER,
                 image_url TEXT
+            )
+        ''')
+        # НОВАЯ ТАБЛИЦА ДЛЯ ИСТОРИИ
+        await conn.execute('''
+            CREATE TABLE IF NOT EXISTS transactions (
+                id SERIAL PRIMARY KEY,
+                sender_id BIGINT,
+                receiver_id BIGINT,
+                amount INTEGER,
+                type TEXT,
+                created_at TIMESTAMP DEFAULT NOW()
             )
         ''')
 
@@ -100,7 +112,7 @@ async def cmd_start(message: Message):
     user_id = message.from_user.id
     username = message.from_user.username or f"user_{user_id}"
     await register_user(user_id, username)
-    text = "👋 Привет! Я Trollcoin Bot.\n\n"
+    text = "👋 Привет! Я 𝗕𝗹𝗲𝘀𝘀𝗖𝗼𝗶𝗻 Bot.\n\n"
     text += "📋 **Доступные команды:**\n"
     text += "/balance — проверить баланс\n"
     text += "/claim — ежедневная награда\n"
@@ -108,6 +120,40 @@ async def cmd_start(message: Message):
     text += "/catalog — магазин товаров\n"
     text += "/help — полная справка"
     await message.answer(text, parse_mode="Markdown")
+
+@dp.message(Command("history", "logs", "история"))
+async def cmd_history(message: Message):
+    if not await check_admin(message.from_user.id):
+        return await message.answer("🔒 Только админ")
+    
+    async with pool.acquire() as conn:
+        # Берем последние 20 записей
+        rows = await conn.fetch('SELECT * FROM transactions ORDER BY id DESC LIMIT 20')
+    
+    if not rows:
+        return await message.answer("📭 История пуста")
+    
+    text = "📜 **ИСТОРИЯ ОПЕРАЦИЙ:**\n\n"
+    for row in rows:
+        sender = row['sender_id']
+        receiver = row['receiver_id']
+        amount = row['amount']
+        t_type = row['type']
+        time = row['created_at'].strftime("%d.%m %H:%M")
+        
+        # Красивое описание
+        if t_type == "transfer":
+            desc = f" Перевод: {amount} монет"
+        elif t_type == "admin_add":
+            desc = f"➕ Админ выдал: {amount} монет"
+        elif t_type == "admin_remove":
+            desc = f"➖ Админ списал: {amount} монет"
+        else:
+            desc = f"❓ {t_type}: {amount}"
+            
+        text += f"⏰ {time}\n{desc}\nID отправителя: {sender}\nID получателя: {receiver}\n\n"
+    
+    await message.answer(text)
     
 @dp.message(Command("balance"))
 async def cmd_balance(message: Message):
@@ -171,6 +217,7 @@ async def cmd_help(message: Message):
     text += "/addadmin @user —  назначить админа\n"
     text += "/removeadmin @user — снять админа"
     await message.answer(text, parse_mode="Markdown")
+    
 @dp.message(Command("transfer"))
 async def cmd_transfer(message: Message):
     parts = message.text.split()
@@ -193,22 +240,20 @@ async def cmd_transfer(message: Message):
             
             await conn.execute('UPDATE users SET balance = balance - $1 WHERE user_id = $2', amount, sender)
             await conn.execute('UPDATE users SET balance = balance + $1 WHERE user_id = $2', amount, t['user_id'])
+            
+            # ЗАПИСЬ В ИСТОРИЮ
+            await conn.execute(
+                'INSERT INTO transactions (sender_id, receiver_id, amount, type) VALUES ($1, $2, $3, $4)',
+                sender, t['user_id'], amount, 'transfer'
+            )
         
         new_sender_bal = sender_data['balance'] - amount
         new_target_bal = t['balance'] + amount
         
-        # Уведомление отправителю
         await message.answer(f"✅ Переведено **{amount}** монет @{t['username']}\nТвой баланс: **{new_sender_bal}**", parse_mode="Markdown")
-        
-        # Уведомление получателю
         try:
-            await bot.send_message(
-                t['user_id'],
-                f"💸 Тебе перевели **{amount}** монет от @{sender_data['username'] or message.from_user.id}!\nНовый баланс: **{new_target_bal}**",
-                parse_mode="Markdown"
-            )
-        except:
-            pass
+            await bot.send_message(t['user_id'], f"💸 Тебе перевели **{amount}** монет!\nБаланс: **{new_target_bal}**", parse_mode="Markdown")
+        except: pass
     except Exception as e:
         await message.answer(f"❌ Ошибка: {e}")
 
@@ -268,29 +313,26 @@ async def cmd_givemoney(message: Message):
     try:
         name = parts[1].replace("@", "")
         amount = int(parts[2])
-        if amount <= 0:
-            return await message.answer("Сумма > 0")
+        if amount <= 0: return
         
         async with pool.acquire() as conn:
             t = await conn.fetchrow('SELECT user_id, username, balance FROM users WHERE username = $1', name)
-        if not t:
-            return await message.answer("Не найден")
+        if not t: return await message.answer("Не найден")
         
         await add_balance(t['user_id'], amount)
         new_bal = t['balance'] + amount
         
-        # Уведомление админу
-        await message.answer(f"✅ Выдано {amount} монет @{t['username']}\nБаланс: {new_bal}")
-        
-        # Уведомление получателю
-        try:
-            await bot.send_message(
-                t['user_id'],
-                f"🎁 Администратор выдал тебе **{amount}** монет!\nНовый баланс: **{new_bal}**",
-                parse_mode="Markdown"
+        async with pool.acquire() as conn:
+             # ЗАПИСЬ В ИСТОРИЮ (sender_id = 0, так как это админ)
+            await conn.execute(
+                'INSERT INTO transactions (sender_id, receiver_id, amount, type) VALUES ($1, $2, $3, $4)',
+                message.from_user.id, t['user_id'], amount, 'admin_add'
             )
-        except:
-            pass
+
+        await message.answer(f"✅ Выдано {amount} монет @{t['username']}\nБаланс: {new_bal}")
+        try:
+            await bot.send_message(t['user_id'], f"🎁 Админ выдал **{amount}** монет!\nБаланс: **{new_bal}**", parse_mode="Markdown")
+        except: pass
     except Exception as e:
         await message.answer(f"❌ Ошибка: {e}")
 
@@ -304,8 +346,7 @@ async def cmd_takemoney(message: Message):
     try:
         name = parts[1].replace("@", "")
         amount = int(parts[2])
-        if amount <= 0:
-            return await message.answer("Сумма > 0")
+        if amount <= 0: return
         
         async with pool.acquire() as conn:
             t = await conn.fetchrow('SELECT user_id, username, balance FROM users WHERE username = $1', name)
@@ -314,23 +355,19 @@ async def cmd_takemoney(message: Message):
         
         async with pool.acquire() as conn:
             await conn.execute('UPDATE users SET balance = balance - $1 WHERE user_id = $2', amount, t['user_id'])
+            # ЗАПИСЬ В ИСТОРИЮ
+            await conn.execute(
+                'INSERT INTO transactions (sender_id, receiver_id, amount, type) VALUES ($1, $2, $3, $4)',
+                message.from_user.id, t['user_id'], amount, 'admin_remove'
+            )
         
         new_bal = t['balance'] - amount
-        
-        # Уведомление админу
         await message.answer(f"✅ Списано {amount} монет у @{t['username']}\nБаланс: {new_bal}")
-        
-        # Уведомление пользователю
         try:
-            await bot.send_message(
-                t['user_id'],
-                f"⚠️ Администратор списал **{amount}** монет!\nНовый баланс: **{new_bal}**",
-                parse_mode="Markdown"
-            )
-        except:
-            pass
+            await bot.send_message(t['user_id'], f"⚠️ Админ списал **{amount}** монет!\nБаланс: **{new_bal}**", parse_mode="Markdown")
+        except: pass
     except Exception as e:
-        await message.answer(f"❌ Ошибка: {e}")
+        await message.answer(f" Ошибка: {e}")
         
 @dp.message(Command("addadmin"))
 async def cmd_addadmin(message: Message):
