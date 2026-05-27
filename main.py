@@ -643,9 +643,35 @@ async def send_quiz_question(bot, user_id, quiz_id, q_index):
             import json
             questions = json.loads(questions)
         
+        # Если вопросы закончились
         if q_index >= len(questions):
-            await bot.send_message(user_id, "✅ **Все вопросы пройдены!**\nЖди результатов в чате.", parse_mode="Markdown")
-            return
+            # 1. Считаем правильные ответы пользователя
+            score = await conn.fetchval(
+                "SELECT COUNT(*) FROM quiz_answers WHERE quiz_id = $1 AND user_id = $2 AND is_correct = true",
+                quiz_id, user_id
+            )
+            
+            # 2. Считаем время прохождения (от первого до последнего ответа)
+            time_row = await conn.fetchrow(
+                "SELECT MIN(started_at) as start_t, MAX(started_at) as end_t FROM quiz_answers WHERE quiz_id = $1 AND user_id = $2",
+                quiz_id, user_id
+            )
+            
+            duration = 0
+            if time_row['start_t'] and time_row['end_t']:
+                duration = (time_row['end_t'] - time_row['start_t']).total_seconds()
+            
+            # 3. Отправляем результат
+            msg = f"✅ **Викторина завершена!**\n\n"
+            msg += f"📊 **Твой результат:**\n"
+            msg += f"✅ Правильных ответов: **{score}/{len(questions)}**\n"
+            msg += f"⏱️ Твое время: **{int(duration)} сек.**\n\n"
+            msg += "🏆 Итоги и награды будут опубликованы в чате после окончания таймера."
+            
+            await bot.send_message(user_id, msg, parse_mode="Markdown")
+            return  # Выходим, чтобы не отправлять следующий вопрос
+            
+        # ... дальше код отправки следующего вопроса ...
             
         q = questions[q_index]
         
@@ -705,14 +731,16 @@ async def finish_quiz_task(quiz_id, delay):
         # 1. МЕНЯЕМ СТАТУС
         await conn.execute("UPDATE quizzes SET status = 'finished' WHERE id = $1", quiz_id)
         
-        # 2. СЧИТАЕМ РЕЗУЛЬТАТЫ
+        # 2. СЧИТАЕМ РЕЗУЛЬТАТЫ"
+        # 1. Убрали LIMIT 3, чтобы получить ВСЕХ участников
         results = await conn.fetch('''
-            SELECT user_id, COUNT(*) FILTER (WHERE is_correct = true) as score 
+            SELECT user_id, 
+                   COUNT(*) FILTER (WHERE is_correct = true) as score,
+                   EXTRACT(EPOCH FROM (MAX(started_at) - MIN(started_at))) as duration_sec
             FROM quiz_answers 
             WHERE quiz_id = $1 
             GROUP BY user_id 
-            ORDER BY score DESC 
-            LIMIT 3
+            ORDER BY score DESC, duration_sec ASC
         ''', quiz_id)
         
         text = f"🏁 **ВИКТОРИНА #{quiz_id} ЗАВЕРШЕНА!**\n\n"
@@ -721,23 +749,29 @@ async def finish_quiz_task(quiz_id, delay):
             text += "😔 **Никто не участвовал**"
         else:
             prize = quiz['prize_pool']
-            distribution = [0.5, 0.3, 0.2]
+            distribution = [0.5, 0.3, 0.2]  # Призы только топ-3
             
             for i, row in enumerate(results):
                 uid = row['user_id']
                 score = row['score']
-                reward = int(prize * distribution[i])
+                duration = row['duration_sec'] or 0
                 
-                # Выдаем монеты
-                try:
+                # Топ-3: медали + призы
+                if i < 3:
+                    reward = int(prize * distribution[i])
                     await conn.execute("UPDATE users SET balance = balance + $1 WHERE user_id = $2", reward, uid)
-                except Exception as e:
-                    print(f"Ошибка начисления монет {uid}: {e}")
+                    medals = ["🥇", "🥈", "🥉"]
+                    prefix = f"{medals[i]} "
+                    reward_str = f" → **+{reward} 🪙**"
+                # Остальные: просто номер
+                else:
+                    prefix = f" {i+1}. "
+                    reward_str = ""
                 
                 username = await conn.fetchval("SELECT username FROM users WHERE user_id = $1", uid)
-                medals = ["🥇", "🥈", "🥉"]
-                text += f"{medals[i]} {username or uid}: {score} правильных → **+{reward} 🪙**\n"
-        
+                time_str = f"{duration:.1f}с"
+                
+                text += f"{prefix}{username or uid}: {score} прав. ({time_str}){reward_str}\n"
         # 3. ОТПРАВЛЯЕМ РЕЗУЛЬТАТЫ (ОБЯЗАТЕЛЬНО!)
         try:
             result_msg = await bot.send_message(chat_id, text, parse_mode="Markdown")
