@@ -613,12 +613,17 @@ async def quiz_click(cb: CallbackQuery):
 # 9. ОТПРАВКА ВОПРОСА (В ЛС)
 async def send_quiz_question(bot, user_id, quiz_id, q_index):
     async with pool.acquire() as conn:
-        quiz = await conn.fetchrow("SELECT questions FROM quizzes WHERE id = $1", quiz_id)
-        if not quiz or quiz['status'] != 'active': return
+        # Выбираем ВСЁ (*), чтобы был доступен status
+        quiz = await conn.fetchrow("SELECT * FROM quizzes WHERE id = $1", quiz_id)
         
-        questions = json.loads(quiz['questions'])
+        if not quiz or quiz['status'] != 'active': 
+            return
+        
+        # questions уже список (asyncpg сам распарсил JSONB)
+        questions = quiz['questions']
+        
         if q_index >= len(questions):
-            await bot.send_message(user_id, "✅ **Все вопросы пройдены!**\nЖди результатов в чате.")
+            await bot.send_message(user_id, "✅ **Все вопросы пройдены!**\nЖди результатов в чате.", parse_mode="Markdown")
             return
             
         q = questions[q_index]
@@ -643,18 +648,19 @@ async def process_answer(cb: CallbackQuery):
         quiz = await conn.fetchrow("SELECT questions FROM quizzes WHERE id = $1", quiz_id)
         if not quiz: return
         
-        questions = json.loads(quiz['questions'])
+        # questions уже список (asyncpg сам распарсил JSONB)
+        questions = quiz['questions']
         is_correct = (questions[q_idx]['correct'] == answer_idx)
         
         # Записываем ответ
         await conn.execute(
             "INSERT INTO quiz_answers (quiz_id, user_id, question_index, is_correct, response_time_sec, started_at) VALUES ($1, $2, $3, $4, $5, NOW())",
-            quiz_id, cb.from_user.id, q_idx, is_correct, 0 # Время пока 0, упрощение
+            quiz_id, cb.from_user.id, q_idx, is_correct, 0
         )
         
     await cb.answer("Ответ принят!")
-    await cb.message.delete() # Удаляем вопрос
-    await send_quiz_question(cb.bot, cb.from_user.id, quiz_id, q_idx + 1) # Следующий вопрос
+    await cb.message.delete() 
+    await send_quiz_question(cb.bot, cb.from_user.id, quiz_id, q_idx + 1)
 # 11. ФИНАЛ И НАГРАДЫ
 async def finish_quiz_task(quiz_id, delay):
     await asyncio.sleep(delay)
