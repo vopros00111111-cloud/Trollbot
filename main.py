@@ -735,7 +735,7 @@ async def finish_quiz_task(quiz_id, delay):
                     print(f"Ошибка начисления монет {uid}: {e}")
                 
                 username = await conn.fetchval("SELECT username FROM users WHERE user_id = $1", uid)
-                medals = ["🥇", "", "🥉"]
+                medals = ["🥇", "🥈", "🥉"]
                 text += f"{medals[i]} {username or uid}: {score} правильных → **+{reward} 🪙**\n"
         
         # 3. ОТПРАВЛЯЕМ РЕЗУЛЬТАТЫ (ОБЯЗАТЕЛЬНО!)
