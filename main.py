@@ -563,37 +563,54 @@ async def finish_create_quiz(message: Message, state: FSMContext):
 # 7. ПУБЛИКАЦИЯ В ЧАТЕ
 @dp.message(Command("quiz"))
 async def publish_quiz(message: Message):
-    if not await check_admin(message.from_user.id): return
+    if not await check_admin(message.from_user.id): 
+        return
     
     args = message.text.split()
     if len(args) != 3:
         return await message.answer("Формат: `/quiz <время> <ID>`. Пример: `/quiz 1h 5`", parse_mode="Markdown")
     
     time_str, quiz_id = args[1], args[2]
+    
     # Парсим время
     seconds = 0
-    if time_str.endswith("h"): seconds = int(time_str[:-1]) * 3600
-    elif time_str.endswith("m"): seconds = int(time_str[:-1]) * 60
-    else: return await message.answer("Время в формате 30m или 1h")
+    if time_str.endswith("h"): 
+        seconds = int(time_str[:-1]) * 3600
+    elif time_str.endswith("m"): 
+        seconds = int(time_str[:-1]) * 60
+    else: 
+        return await message.answer("Время в формате 30m или 1h")
     
     async with pool.acquire() as conn:
         quiz = await conn.fetchrow("SELECT * FROM quizzes WHERE id = $1", int(quiz_id))
         
     if not quiz:
         return await message.answer("Викторина с таким ID не найдена")
-        
-    # Обновляем статус
-    async with pool.acquire() as conn:
-        await conn.execute("UPDATE quizzes SET status = 'active', chat_id = $1, started_at = NOW(), time_limit_seconds = $2 WHERE id = $3", message.chat.id, seconds, int(quiz_id))
-        
+    
+    # Отправляем сообщение с кнопкой
     btn = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="🎮 Участвовать", callback_data=f"start_quiz_{quiz_id}")]])
-    await message.answer(
+    
+    sent_message = await message.answer(
         f"🏆 **ВИКТОРИНА #{quiz_id}**\n\n💰 Банк: **{quiz['prize_pool']}** монет\n⏱️ Время: **{time_str}**\n📝 Вопросов: {len(json.loads(quiz['questions']))}",
-        reply_markup=btn, parse_mode="Markdown"
+        reply_markup=btn, 
+        parse_mode="Markdown"
     )
     
+    # Закрепляем сообщение
+    try:
+        await sent_message.pin()
+    except Exception as e:
+        await message.answer(f"⚠️ Не удалось закрепить сообщение: {e}")
+    
+    # Обновляем статус и сохраняем message_id
+    async with pool.acquire() as conn:
+        await conn.execute(
+            "UPDATE quizzes SET status = 'active', chat_id = $1, started_at = NOW(), time_limit_seconds = $2, message_id = $3 WHERE id = $4", 
+            message.chat.id, seconds, sent_message.message_id, int(quiz_id)
+        )
+    
     # Запускаем таймер в фоне
-    asyncio.create_task(finish_quiz_task(int(quiz_id), seconds))
+    asyncio.create_task(finish_quiz_task(int(quiz_id), seconds, message.chat.id, sent_message.message_id))
 
 # 8. УЧАСТИЕ (КНОПКА В ЧАТЕ)
 @dp.callback_query(F.data.startswith("start_quiz_"))
@@ -673,7 +690,7 @@ async def process_answer(cb: CallbackQuery):
     await cb.message.delete() 
     await send_quiz_question(cb.bot, cb.from_user.id, quiz_id, q_idx + 1)
 # 11. ФИНАЛ И НАГРАДЫ
-async def finish_quiz_task(quiz_id, delay):
+async def finish_quiz_task(quiz_id, delay, chat_id, message_id):
     await asyncio.sleep(delay)
     
     async with pool.acquire() as conn:
@@ -681,10 +698,10 @@ async def finish_quiz_task(quiz_id, delay):
         await conn.execute("UPDATE quizzes SET status = 'finished' WHERE id = $1", quiz_id)
         quiz = await conn.fetchrow("SELECT * FROM quizzes WHERE id = $1", quiz_id)
         
-        if not quiz: return
+        if not quiz: 
+            return
         
-        # Считаем очки: 1 за правильный ответ. Сортируем по очкам DESC.
-        # (Упрощенная логика: считаем просто кол-во правильных)
+        # Считаем очки
         results = await conn.fetch('''
             SELECT user_id, COUNT(*) FILTER (WHERE is_correct = true) as score 
             FROM quiz_answers 
@@ -696,10 +713,10 @@ async def finish_quiz_task(quiz_id, delay):
         
         text = f"🏁 **ВИКТОРИНА #{quiz_id} ЗАВЕРШЕНА!**\n\n"
         if not results:
-            text += "Никто не участвовал "
+            text += "Никто не участвовал 😔"
         else:
             prize = quiz['prize_pool']
-            distribution = [0.5, 0.3, 0.2] # 50%, 30%, 20%
+            distribution = [0.5, 0.3, 0.2]  # 50%, 30%, 20%
             
             for i, row in enumerate(results):
                 uid = row['user_id']
@@ -713,11 +730,18 @@ async def finish_quiz_task(quiz_id, delay):
                 medals = ["🥇", "🥈", "🥉"]
                 text += f"{medals[i]} {username or uid}: {score} правильных → **+{reward} монет**\n"
         
-        # Отправляем в чат
+        # Отправляем результаты в чат
         try:
-            await bot.send_message(quiz['chat_id'], text, parse_mode="Markdown")
-        except:
-            pass
+            result_msg = await bot.send_message(chat_id, text, parse_mode="Markdown")
+            await result_msg.pin()  # Закрепляем результаты
+            
+            # Открепляем старое сообщение с викториной
+            try:
+                await bot.unpin_chat_message(chat_id, message_id)
+            except:
+                pass
+        except Exception as e:
+            print(f"Error sending results: {e}")
 
 async def main():
     await init_db()
