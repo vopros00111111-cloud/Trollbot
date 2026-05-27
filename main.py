@@ -496,10 +496,12 @@ async def get_options(message: Message, state: FSMContext):
     q_list = temp_quizzes[message.from_user.id]["questions"]
     q_list[-1]["options"] = opts
     
-    # Формируем кнопки для выбора правильного
-    btns = [[KeyboardButton(text=f"✅ {i+1}. {opt}")] for i, opt in enumerate(opts)]
-    await message.answer("Какой вариант правильный? (Нажми кнопку ниже)", reply_markup=ReplyKeyboardMarkup(keyboard=btns, resize_keyboard=True))    await state.set_state(QuizCreateStates.waiting_for_correct)
-
+    # Формируем кнопки - просто текст, не KeyboardButton
+    btns = [[f"✅ {i+1}. {opt.strip()}"] for i, opt in enumerate(opts)]
+    keyboard = ReplyKeyboardMarkup(keyboard=btns, resize_keyboard=True)
+    
+    await message.answer("Какой вариант правильный? (Нажми кнопку ниже)", reply_markup=keyboard)
+    await state.set_state(QuizCreateStates.waiting_for_correct)
 # 4. ПРАВИЛЬНЫЙ ОТВЕТ
 @dp.message(QuizCreateStates.waiting_for_correct)
 async def get_correct(message: Message, state: FSMContext):
