@@ -540,19 +540,20 @@ async def finish_create_quiz(message: Message, state: FSMContext):
         prize = int(message.text)
     except:
         return await message.answer("Это не число!")
-        
+    
     data = temp_quizzes[message.from_user.id]
     
-    # Сохраняем в БД
     async with pool.acquire() as conn:
         row = await conn.fetchrow(
             'INSERT INTO quizzes (chat_id, prize_pool, questions, created_by) VALUES (0, $1, $2, $3) RETURNING id',
             prize, json.dumps(data["questions"]), message.from_user.id
         )
-            await message.answer(f"✅ Викторина создана!\nID: **{row['id']}**\nВопросов: {len(data['questions'])}\n\nТеперь напиши в чате: `/quiz 1h {row['id']}`", parse_mode="Markdown")
+    
+    text = f"✅ Викторина создана!\nID: **{row['id']}**\nВопросов: {len(data['questions'])}\n\nТеперь напиши в чате: `/quiz 1h {row['id']}`"
+    await message.answer(text, parse_mode="Markdown")
+    
     await state.clear()
     del temp_quizzes[message.from_user.id]
-
 # 7. ПУБЛИКАЦИЯ В ЧАТЕ
 @dp.message(Command("quiz"))
 async def publish_quiz(message: Message):
