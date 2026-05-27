@@ -749,7 +749,69 @@ async def finish_quiz_task(quiz_id, delay):
                 print(f"✅ Откреплено сообщение {message_id} в чате {chat_id}")
             except Exception as e:
                 print(f"❌ Не удалось открепить сообщение: {e}")
-
+async def finish_quiz_task(quiz_id, delay):
+    # Ждем указанное время (таймер)
+    await asyncio.sleep(delay)
+    
+    async with pool.acquire() as conn:
+        # 1. Получаем данные викторины из базы
+        quiz = await conn.fetchrow("SELECT * FROM quizzes WHERE id = $1", quiz_id)
+        
+        # Если викторины нет или она уже завершена — выходим
+        if not quiz or quiz['status'] == 'finished': 
+            return
+        
+        chat_id = quiz['chat_id']
+        message_id = quiz.get('message_id')  # ID сообщения, которое нужно открепить
+        
+        # 2. Меняем статус на finished
+        await conn.execute("UPDATE quizzes SET status = 'finished' WHERE id = $1", quiz_id)
+        
+        # 3. Считаем результаты (Топ-3)
+        results = await conn.fetch('''
+            SELECT user_id, COUNT(*) FILTER (WHERE is_correct = true) as score 
+            FROM quiz_answers 
+            WHERE quiz_id = $1 
+            GROUP BY user_id 
+            ORDER BY score DESC 
+            LIMIT 3
+        ''', quiz_id)
+        
+        text = f" **ВИКТОРИНА #{quiz_id} ЗАВЕРШЕНА!**\n\n"
+        
+        if not results:
+            text += "Никто не участвовал 😔"
+        else:
+            prize = quiz['prize_pool']
+            distribution = [0.5, 0.3, 0.2]  # 50%, 30%, 20%
+            
+            for i, row in enumerate(results):
+                uid = row['user_id']
+                score = row['score']
+                reward = int(prize * distribution[i])
+                
+                # Выдаем монеты победителям
+                await conn.execute("UPDATE users SET balance = balance + $1 WHERE user_id = $2", reward, uid)
+                
+                username = await conn.fetchval("SELECT username FROM users WHERE user_id = $1", uid)
+                medals = ["🥇", "🥈", "🥉"]
+                text += f"{medals[i]} {username or uid}: {score} правильных → **+{reward} монет**\n"
+        
+        # 4. Отправляем результаты в чат
+        try:
+            result_msg = await bot.send_message(chat_id, text, parse_mode="Markdown")
+            await result_msg.pin()  # Закрепляем результаты
+        except Exception as e:
+            print(f"Ошибка отправки результатов: {e}")
+        
+        # 5. ОТКРЕПЛЯЕМ СТАРУЮ ВИКТОРИНУ
+        if message_id:
+            try:
+                await bot.unpin_chat_message(chat_id=chat_id, message_id=message_id)
+                print(f"✅ Сообщение викторины {message_id} откреплено.")
+            except Exception as e:
+                print(f"❌ Не удалось открепить сообщение: {e}")
+                
 async def main():
     await init_db()
     logger.info("🤖 Запущен с PostgreSQL")
