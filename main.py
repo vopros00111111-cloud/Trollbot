@@ -50,16 +50,6 @@ async def init_db():
             )
         ''')
         await conn.execute('''
-            CREATE TABLE IF NOT EXISTS catalog (
-                id SERIAL PRIMARY KEY,
-                name TEXT,
-                description TEXT,
-                price INTEGER,
-                image_url TEXT
-            )
-        ''')
-        # НОВАЯ ТАБЛИЦА ДЛЯ ИСТОРИИ
-        await conn.execute('''
             CREATE TABLE IF NOT EXISTS transactions (
                 id SERIAL PRIMARY KEY,
                 sender_id BIGINT,
@@ -67,6 +57,32 @@ async def init_db():
                 amount INTEGER,
                 type TEXT,
                 created_at TIMESTAMP DEFAULT NOW()
+            )
+        ''')
+        # === НОВАЯ ТАБЛИЦА ДЛЯ ВИКТОРИН ===
+        await conn.execute('''
+            CREATE TABLE IF NOT EXISTS quizzes (
+                id SERIAL PRIMARY KEY,
+                chat_id BIGINT,
+                message_id INTEGER,
+                prize_pool INTEGER,
+                time_limit_seconds INTEGER,
+                questions JSONB, -- Тут хранятся все вопросы списком
+                created_by BIGINT,
+                status TEXT DEFAULT 'waiting', -- waiting, active, finished
+                started_at TIMESTAMP
+            )
+        ''')
+        # === ТАБЛИЦА ОТВЕТОВ ===
+        await conn.execute('''
+            CREATE TABLE IF NOT EXISTS quiz_answers (
+                quiz_id INTEGER,
+                user_id BIGINT,
+                question_index INTEGER,
+                is_correct BOOLEAN,
+                response_time_sec INTEGER,
+                started_at TIMESTAMP,
+                PRIMARY KEY (quiz_id, user_id, question_index)
             )
         ''')
 
@@ -432,6 +448,250 @@ async def cmd_removeadmin(message: Message):
             pass
     except Exception as e:
         await message.answer(f"❌ Ошибка: {e}")
+
+from aiogram.fsm.context import FSMContext
+from aiogram.fsm.state import State, StatesGroup
+from datetime import datetime, timedelta
+import json
+import asyncio
+
+# --- СОСТОЯНИЯ ДЛЯ СОЗДАНИЯ ВИКТОРИНЫ ---
+class QuizCreateStates(StatesGroup):
+    waiting_for_question = State()
+    waiting_for_options = State()
+    waiting_for_correct = State()
+    asking_more = State()
+    waiting_for_prize = State()
+
+# ВРЕМЕННОЕ ХРАНИЛИЩЕ ДАННЫХ (в памяти)
+temp_quizzes = {}
+
+# 1. НАЧАЛО СОЗДАНИЯ
+@dp.message(Command("create_quiz"))
+async def start_create_quiz(message: Message, state: FSMContext):
+    if not await check_admin(message.from_user.id):
+        return
+    temp_quizzes[message.from_user.id] = {"questions": []}
+    await message.answer("🎬 Создаём викторину.\n\nВведи **вопрос** №1:")
+    await state.set_state(QuizCreateStates.waiting_for_question)
+
+# 2. ВОПРОС
+@dp.message(QuizCreateStates.waiting_for_question)
+async def get_question(message: Message, state: FSMContext):
+    temp_quizzes[message.from_user.id]["questions"].append({
+        "text": message.text,
+        "options": [],
+        "correct": 0
+    })
+    await message.answer("Введи **варианты ответов** через `|`.\nПример: `Синий|Красный|Зеленый`")
+    await state.set_state(QuizCreateStates.waiting_for_options)
+
+# 3. ВАРИАНТЫ
+@dp.message(QuizCreateStates.waiting_for_options)
+async def get_options(message: Message, state: FSMContext):
+    opts = message.text.split("|")
+    if len(opts) < 2:
+        return await message.answer("Нужно минимум 2 варианта!")
+    
+    q_list = temp_quizzes[message.from_user.id]["questions"]
+    q_list[-1]["options"] = opts
+    
+    # Формируем кнопки для выбора правильного
+    btns = [[KeyboardButton(text=f"✅ {i+1}. {opt}")] for i, opt in enumerate(opts)]
+    await message.answer("Какой вариант правильный? (Нажми кнопку ниже)", reply_markup=ReplyKeyboardMarkup(keyboard=btns, resize_keyboard=True))    await state.set_state(QuizCreateStates.waiting_for_correct)
+
+# 4. ПРАВИЛЬНЫЙ ОТВЕТ
+@dp.message(QuizCreateStates.waiting_for_correct)
+async def get_correct(message: Message, state: FSMContext):
+    # Определяем номер ответа (ищем по тексту)
+    opts = temp_quizzes[message.from_user.id]["questions"][-1]["options"]
+    correct_idx = -1
+    for i, opt in enumerate(opts):
+        if opt.strip() in message.text:
+            correct_idx = i
+            break
+            
+    if correct_idx == -1:
+        return await message.answer("Не понял, нажми на кнопку из списка выше.")
+
+    temp_quizzes[message.from_user.id]["questions"][-1]["correct"] = correct_idx
+    
+    kb = ReplyKeyboardMarkup(keyboard=[[KeyboardButton(text="➕ Да"), KeyboardButton(text=" Нет, завершить")]], resize_keyboard=True)
+    await message.answer("Добавить ещё вопрос?", reply_markup=kb)
+    await state.set_state(QuizCreateStates.asking_more)
+
+# 5. ЕЩЁ ВОПРОС?
+@dp.message(QuizCreateStates.asking_more)
+async def ask_more(message: Message, state: FSMContext):
+    if message.text.lower() in ["да", "➕ да"]:
+        count = len(temp_quizzes[message.from_user.id]["questions"]) + 1
+        await message.answer(f"Введи **вопрос** №{count}:", reply_markup=ReplyKeyboardRemove())
+        await state.set_state(QuizCreateStates.waiting_for_question)
+    else:
+        await message.answer("Введи **призовой фонд** (сумма монет, которую получат победители):", reply_markup=ReplyKeyboardRemove())
+        await state.set_state(QuizCreateStates.waiting_for_prize)
+
+# 6. ПРИЗ И СОХРАНЕНИЕ
+@dp.message(QuizCreateStates.waiting_for_prize)
+async def finish_create_quiz(message: Message, state: FSMContext):
+    try:
+        prize = int(message.text)
+    except:
+        return await message.answer("Это не число!")
+        
+    data = temp_quizzes[message.from_user.id]
+    
+    # Сохраняем в БД
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            'INSERT INTO quizzes (chat_id, prize_pool, questions, created_by) VALUES (0, $1, $2, $3) RETURNING id',
+            prize, json.dumps(data["questions"]), message.from_user.id
+        )
+            await message.answer(f"✅ Викторина создана!\nID: **{row['id']}**\nВопросов: {len(data['questions'])}\n\nТеперь напиши в чате: `/quiz 1h {row['id']}`", parse_mode="Markdown")
+    await state.clear()
+    del temp_quizzes[message.from_user.id]
+
+# 7. ПУБЛИКАЦИЯ В ЧАТЕ
+@dp.message(Command("quiz"))
+async def publish_quiz(message: Message):
+    if not await check_admin(message.from_user.id): return
+    
+    args = message.text.split()
+    if len(args) != 3:
+        return await message.answer("Формат: `/quiz <время> <ID>`. Пример: `/quiz 1h 5`", parse_mode="Markdown")
+    
+    time_str, quiz_id = args[1], args[2]
+    # Парсим время
+    seconds = 0
+    if time_str.endswith("h"): seconds = int(time_str[:-1]) * 3600
+    elif time_str.endswith("m"): seconds = int(time_str[:-1]) * 60
+    else: return await message.answer("Время в формате 30m или 1h")
+    
+    async with pool.acquire() as conn:
+        quiz = await conn.fetchrow("SELECT * FROM quizzes WHERE id = $1", int(quiz_id))
+        
+    if not quiz:
+        return await message.answer("Викторина с таким ID не найдена")
+        
+    # Обновляем статус
+    async with pool.acquire() as conn:
+        await conn.execute("UPDATE quizzes SET status = 'active', chat_id = $1, started_at = NOW(), time_limit_seconds = $2 WHERE id = $3", message.chat.id, seconds, int(quiz_id))
+        
+    btn = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="🎮 Участвовать", callback_data=f"start_quiz_{quiz_id}")]])
+    await message.answer(
+        f"🏆 **ВИКТОРИНА #{quiz_id}**\n\n💰 Банк: **{quiz['prize_pool']}** монет\n⏱️ Время: **{time_str}**\n📝 Вопросов: {len(json.loads(quiz['questions']))}",
+        reply_markup=btn, parse_mode="Markdown"
+    )
+    
+    # Запускаем таймер в фоне
+    asyncio.create_task(finish_quiz_task(int(quiz_id), seconds))
+
+# 8. УЧАСТИЕ (КНОПКА В ЧАТЕ)
+@dp.callback_query(F.data.startswith("start_quiz_"))
+async def quiz_click(cb: CallbackQuery):
+    quiz_id = int(cb.data.split("_")[2])
+    user_id = cb.from_user.id
+    
+    # Проверка: не участвовал ли уже?
+    async with pool.acquire() as conn:
+        count = await conn.fetchval("SELECT COUNT(*) FROM quiz_answers WHERE quiz_id = $1 AND user_id = $2", quiz_id, user_id)
+    if count > 0:
+        return await cb.answer("Ты уже участвуешь! Ищи сообщение от бота в ЛС.", show_alert=True)        
+    await cb.bot.send_message(user_id, "🎮 **Викторина началась!**\nОтвечай на вопросы...", parse_mode="Markdown")
+    await send_quiz_question(cb.bot, user_id, quiz_id, 0)
+    await cb.answer()
+
+# 9. ОТПРАВКА ВОПРОСА (В ЛС)
+async def send_quiz_question(bot, user_id, quiz_id, q_index):
+    async with pool.acquire() as conn:
+        quiz = await conn.fetchrow("SELECT questions FROM quizzes WHERE id = $1", quiz_id)
+        if not quiz or quiz['status'] != 'active': return
+        
+        questions = json.loads(quiz['questions'])
+        if q_index >= len(questions):
+            await bot.send_message(user_id, "✅ **Все вопросы пройдены!**\nЖди результатов в чате.")
+            return
+            
+        q = questions[q_index]
+        
+        # Кнопки с ответами
+        btns = [[InlineKeyboardButton(text=opt, callback_data=f"ans_{quiz_id}_{q_index}_{i}")] for i, opt in enumerate(q['options'])]
+        
+        await bot.send_message(
+            user_id, 
+            f"❓ **Вопрос {q_index + 1}/{len(questions)}**\n\n{q['text']}", 
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=btns),
+            parse_mode="Markdown"
+        )
+
+# 10. ОБРАБОТКА ОТВЕТА (В ЛС)
+@dp.callback_query(F.data.startswith("ans_"))
+async def process_answer(cb: CallbackQuery):
+    _, quiz_id, q_idx, answer_idx = cb.data.split("_")
+    quiz_id, q_idx, answer_idx = int(quiz_id), int(q_idx), int(answer_idx)
+    
+    async with pool.acquire() as conn:
+        quiz = await conn.fetchrow("SELECT questions FROM quizzes WHERE id = $1", quiz_id)
+        if not quiz: return
+        
+        questions = json.loads(quiz['questions'])
+        is_correct = (questions[q_idx]['correct'] == answer_idx)
+        
+        # Записываем ответ
+        await conn.execute(
+            "INSERT INTO quiz_answers (quiz_id, user_id, question_index, is_correct, response_time_sec, started_at) VALUES ($1, $2, $3, $4, $5, NOW())",
+            quiz_id, cb.from_user.id, q_idx, is_correct, 0 # Время пока 0, упрощение
+        )
+        
+    await cb.answer("Ответ принят!")
+    await cb.message.delete() # Удаляем вопрос
+    await send_quiz_question(cb.bot, cb.from_user.id, quiz_id, q_idx + 1) # Следующий вопрос
+# 11. ФИНАЛ И НАГРАДЫ
+async def finish_quiz_task(quiz_id, delay):
+    await asyncio.sleep(delay)
+    
+    async with pool.acquire() as conn:
+        # Блокируем викторину
+        await conn.execute("UPDATE quizzes SET status = 'finished' WHERE id = $1", quiz_id)
+        quiz = await conn.fetchrow("SELECT * FROM quizzes WHERE id = $1", quiz_id)
+        
+        if not quiz: return
+        
+        # Считаем очки: 1 за правильный ответ. Сортируем по очкам DESC.
+        # (Упрощенная логика: считаем просто кол-во правильных)
+        results = await conn.fetch('''
+            SELECT user_id, COUNT(*) FILTER (WHERE is_correct = true) as score 
+            FROM quiz_answers 
+            WHERE quiz_id = $1 
+            GROUP BY user_id 
+            ORDER BY score DESC 
+            LIMIT 3
+        ''', quiz_id)
+        
+        text = f"🏁 **ВИКТОРИНА #{quiz_id} ЗАВЕРШЕНА!**\n\n"
+        if not results:
+            text += "Никто не участвовал "
+        else:
+            prize = quiz['prize_pool']
+            distribution = [0.5, 0.3, 0.2] # 50%, 30%, 20%
+            
+            for i, row in enumerate(results):
+                uid = row['user_id']
+                score = row['score']
+                reward = int(prize * distribution[i])
+                
+                # Выдаем монеты
+                await conn.execute("UPDATE users SET balance = balance + $1 WHERE user_id = $2", reward, uid)
+                
+                username = await conn.fetchval("SELECT username FROM users WHERE user_id = $1", uid)
+                medals = ["🥇", "🥈", "🥉"]
+                text += f"{medals[i]} {username or uid}: {score} правильных → **+{reward} монет**\n"
+        
+        # Отправляем в чат
+        try:
+            await bot.send_message(quiz['chat_id'], text, parse_mode="Markdown")
+        except:
+            pass
 
 async def main():
     await init_db()
