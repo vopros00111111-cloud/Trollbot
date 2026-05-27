@@ -610,7 +610,7 @@ async def publish_quiz(message: Message):
         )
     
     # Запускаем таймер в фоне
-    asyncio.create_task(finish_quiz_task(int(quiz_id), seconds, message.chat.id, sent_message.message_id))
+asyncio.create_task(finish_quiz_task(int(quiz_id), seconds))
 
 # 8. УЧАСТИЕ (КНОПКА В ЧАТЕ)
 @dp.callback_query(F.data.startswith("start_quiz_"))
@@ -690,16 +690,21 @@ async def process_answer(cb: CallbackQuery):
     await cb.message.delete() 
     await send_quiz_question(cb.bot, cb.from_user.id, quiz_id, q_idx + 1)
 # 11. ФИНАЛ И НАГРАДЫ
-async def finish_quiz_task(quiz_id, delay, chat_id, message_id):
+async def finish_quiz_task(quiz_id, delay):
     await asyncio.sleep(delay)
     
     async with pool.acquire() as conn:
-        # Блокируем викторину
-        await conn.execute("UPDATE quizzes SET status = 'finished' WHERE id = $1", quiz_id)
+        # Получаем данные викторины
         quiz = await conn.fetchrow("SELECT * FROM quizzes WHERE id = $1", quiz_id)
         
-        if not quiz: 
+        if not quiz or quiz['status'] != 'active': 
             return
+        
+        chat_id = quiz['chat_id']
+        message_id = quiz.get('message_id')  # Получаем ID сообщения
+        
+        # Блокируем викторину
+        await conn.execute("UPDATE quizzes SET status = 'finished' WHERE id = $1", quiz_id)
         
         # Считаем очки
         results = await conn.fetch('''
@@ -727,21 +732,23 @@ async def finish_quiz_task(quiz_id, delay, chat_id, message_id):
                 await conn.execute("UPDATE users SET balance = balance + $1 WHERE user_id = $2", reward, uid)
                 
                 username = await conn.fetchval("SELECT username FROM users WHERE user_id = $1", uid)
-                medals = ["🥇", "🥈", "🥉"]
+                medals = ["🥇", "", "🥉"]
                 text += f"{medals[i]} {username or uid}: {score} правильных → **+{reward} монет**\n"
         
         # Отправляем результаты в чат
         try:
             result_msg = await bot.send_message(chat_id, text, parse_mode="Markdown")
             await result_msg.pin()  # Закрепляем результаты
-            
-            # Открепляем старое сообщение с викториной
-            try:
-                await bot.unpin_chat_message(chat_id, message_id)
-            except:
-                pass
         except Exception as e:
             print(f"Error sending results: {e}")
+        
+        # Открепляем старое сообщение с викториной
+        if message_id:
+            try:
+                await bot.unpin_chat_message(chat_id=chat_id, message_id=message_id)
+                print(f"✅ Откреплено сообщение {message_id} в чате {chat_id}")
+            except Exception as e:
+                print(f"❌ Не удалось открепить сообщение: {e}")
 
 async def main():
     await init_db()
