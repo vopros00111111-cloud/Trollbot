@@ -610,7 +610,7 @@ async def publish_quiz(message: Message):
         )
     
     # Запускаем таймер в фоне
-asyncio.create_task(finish_quiz_task(int(quiz_id), seconds))
+    asyncio.create_task(finish_quiz_task(int(quiz_id), seconds))
 
 # 8. УЧАСТИЕ (КНОПКА В ЧАТЕ)
 @dp.callback_query(F.data.startswith("start_quiz_"))
