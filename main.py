@@ -613,14 +613,18 @@ async def quiz_click(cb: CallbackQuery):
 # 9. ОТПРАВКА ВОПРОСА (В ЛС)
 async def send_quiz_question(bot, user_id, quiz_id, q_index):
     async with pool.acquire() as conn:
-        # Выбираем ВСЁ (*), чтобы был доступен status
+        # Выбираем ВСЁ (*)
         quiz = await conn.fetchrow("SELECT * FROM quizzes WHERE id = $1", quiz_id)
         
         if not quiz or quiz['status'] != 'active': 
             return
         
-        # questions уже список (asyncpg сам распарсил JSONB)
+        # questions — это список словарей (asyncpg парсит JSONB сам, но иногда возвращает строку)
+        # На всякий случай проверим тип
         questions = quiz['questions']
+        if isinstance(questions, str):
+            import json
+            questions = json.loads(questions)
         
         if q_index >= len(questions):
             await bot.send_message(user_id, "✅ **Все вопросы пройдены!**\nЖди результатов в чате.", parse_mode="Markdown")
@@ -628,8 +632,11 @@ async def send_quiz_question(bot, user_id, quiz_id, q_index):
             
         q = questions[q_index]
         
+        # Теперь q — это словарь {'text': '...', 'options': [...], 'correct': 0}
+        options = q['options']
+        
         # Кнопки с ответами
-        btns = [[InlineKeyboardButton(text=opt, callback_data=f"ans_{quiz_id}_{q_index}_{i}")] for i, opt in enumerate(q['options'])]
+        btns = [[InlineKeyboardButton(text=opt, callback_data=f"ans_{quiz_id}_{q_index}_{i}")] for i, opt in enumerate(options)]
         
         await bot.send_message(
             user_id, 
@@ -648,8 +655,12 @@ async def process_answer(cb: CallbackQuery):
         quiz = await conn.fetchrow("SELECT questions FROM quizzes WHERE id = $1", quiz_id)
         if not quiz: return
         
-        # questions уже список (asyncpg сам распарсил JSONB)
         questions = quiz['questions']
+        # Парсим если строка
+        if isinstance(questions, str):
+            import json
+            questions = json.loads(questions)
+            
         is_correct = (questions[q_idx]['correct'] == answer_idx)
         
         # Записываем ответ
