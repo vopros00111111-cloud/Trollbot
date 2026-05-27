@@ -490,14 +490,20 @@ async def get_question(message: Message, state: FSMContext):
 @dp.message(QuizCreateStates.waiting_for_options)
 async def get_options(message: Message, state: FSMContext):
     opts = message.text.split("|")
+    # Убираем пробелы по краям и пустые варианты
+    opts = [o.strip() for o in opts if o.strip()]
+    
     if len(opts) < 2:
         return await message.answer("Нужно минимум 2 варианта!")
     
     q_list = temp_quizzes[message.from_user.id]["questions"]
     q_list[-1]["options"] = opts
     
-    # Формируем кнопки - просто текст, не KeyboardButton
-    btns = [[f"✅ {i+1}. {opt.strip()}"] for i, opt in enumerate(opts)]
+    # Создаем кнопки явно через объект KeyboardButton
+    btns = []
+    for i, opt in enumerate(opts):
+        btns.append([KeyboardButton(text=f"✅ {i+1}. {opt}")])
+        
     keyboard = ReplyKeyboardMarkup(keyboard=btns, resize_keyboard=True)
     
     await message.answer("Какой вариант правильный? (Нажми кнопку ниже)", reply_markup=keyboard)
