@@ -739,14 +739,19 @@ async def process_answer(cb: CallbackQuery):
         is_correct = (questions[q_idx]['correct'] == answer_idx)
         
         # Записываем ответ
-        await conn.execute(
-            "INSERT INTO quiz_answers (quiz_id, user_id, question_index, is_correct, response_time_sec, started_at) VALUES ($1, $2, $3, $4, $5, NOW())",
-            quiz_id, cb.from_user.id, q_idx, is_correct, 0
-        )
+# ✅ Исправь на:
+async with pool.acquire() as conn:
+    quiz = await conn.fetchrow("SELECT questions FROM quizzes WHERE id = $1", quiz_id)
+    if not quiz:
+        return await bot.send_message(user_id, "❌ Викторина не найдена")
+    
+    questions = quiz['questions']
+    if isinstance(questions, str):
+        questions = json.loads(questions)
         
     await cb.answer("Ответ принят!")
     await cb.message.delete() 
-    await send_quiz_question(cb.bot, cb.from_user.id, quiz_id, q_idx + 1)
+    await send_quiz_question(cb.from_user.id, quiz_id, q_idx + 1)
 # 11. ФИНАЛ И НАГРАДЫ
 async def finish_quiz_task(quiz_id, delay):
     await asyncio.sleep(delay)
