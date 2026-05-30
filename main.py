@@ -1082,7 +1082,7 @@ async def process_blackjack(cb: CallbackQuery, state: FSMContext):
 
         await cb.message.edit_text(text, parse_mode="Markdown")
         await state.clear()
-        await cb.ans wer()
+        await cb.ans answer()
 # === ИГРА: КРЭШ ===
 active_crash_games = {}
 
