@@ -36,6 +36,9 @@ dp = Dispatcher()
 # Глобальный пул соединений
 pool = None
 
+# 🔹 Словарь для хранения активных таймеров
+active_timers = {}
+QUIZ_TIME_LIMIT = 15  # секунд на вопрос
 async def init_db():
     global pool
     pool = await asyncpg.create_pool(DATABASE_URL)
@@ -628,39 +631,70 @@ async def quiz_click(cb: CallbackQuery):
     await cb.answer()
 
 # 9. ОТПРАВКА ВОПРОСА (В ЛС)
-async def send_quiz_question(bot, user_id, quiz_id, q_index):
+async def send_quiz_question(user_id: int, quiz_id: int, q_index: int = 0):
+    # Получаем вопросы из БД (твой старый код)
     async with pool.acquire() as conn:
-        # Выбираем ВСЁ (*)
-        quiz = await conn.fetchrow("SELECT * FROM quizzes WHERE id = $1", quiz_id)
+        questions = await conn.fetch(
+            "SELECT * FROM quiz_questions WHERE quiz_id = $1 ORDER BY id", 
+            quiz_id
+        )
+    
+    if not questions:
+        return await bot.send_message(user_id, "❌ Вопросы не найдены.")
         
-        if not quiz or quiz['status'] != 'active': 
-            return
-        
-        # questions — это список словарей (asyncpg парсит JSONB сам, но иногда возвращает строку)
-        # На всякий случай проверим тип
-        questions = quiz['questions']
-        if isinstance(questions, str):
-            import json
-            questions = json.loads(questions)
-        
-        # Если вопросы закончились
-        if q_index >= len(questions):
-            # 1. Считаем правильные ответы пользователя
-            score = await conn.fetchval(
-                "SELECT COUNT(*) FROM quiz_answers WHERE quiz_id = $1 AND user_id = $2 AND is_correct = true",
-                quiz_id, user_id
+    if q_index >= len(questions):
+        # Логика завершения викторины (твой старый код)
+        # ... (оставь как было, только убедись, что здесь нет таймеров) ...
+        score = await conn.fetchval(...) # твой код подсчета
+        await bot.send_message(user_id, f"✅ Викторина окончена! Твой счет: {score}")
+        return
+
+    question = questions[q_index]
+    
+    # 🔹 Отправляем вопрос
+    msg = await bot.send_message(
+        user_id,
+        f"❓ **Вопрос {q_index+1}/{len(questions)}**\n\n{question['text']}",
+        reply_markup=build_quiz_kb(question['options']), # твоя функция клавиатуры
+        parse_mode="Markdown"
+    )
+    
+    # 🔹 Запускаем таймер
+    async def time_is_up():
+        try:
+            await asyncio.sleep(QUIZ_TIME_LIMIT)
+            
+            # Если код дошел сюда, значит пользователь НЕ ответил вовремя
+            
+            # 1. Редактируем сообщение (убираем кнопки)
+            await bot.edit_message_text(
+                chat_id=user_id,
+                message_id=msg.message_id,
+                text=f"❓ **Вопрос {q_index+1}/{len(questions)}**\n\n{question['text']}\n\n⏰ **Время вышло!**",
+                reply_markup=None,
+                parse_mode="Markdown"
             )
             
-            # 2. Считаем время прохождения (от первого до последнего ответа)
-            time_row = await conn.fetchrow(
-                "SELECT MIN(started_at) as start_t, MAX(started_at) as end_t FROM quiz_answers WHERE quiz_id = $1 AND user_id = $2",
-                quiz_id, user_id
-            )
+            # 2. Записываем в БД как ошибку (0 баллов)
+            async with pool.acquire() as conn:
+                await conn.execute(
+                    "INSERT INTO quiz_answers (quiz_id, user_id, question_id, is_correct, started_at) VALUES ($1, $2, $3, $4, NOW())",
+                    quiz_id, user_id, question['id'], False
+                )
             
-            duration = 0
-            if time_row['start_t'] and time_row['end_t']:
-                duration = (time_row['end_t'] - time_row['start_t']).total_seconds()
+            # 3. Ждем немного и переходим к следующему вопросу
+            await asyncio.sleep(1.5)
+            await send_quiz_question(user_id, quiz_id, q_index + 1)
             
+        except asyncio.CancelledError:
+            # Таймер был отменен (пользователь успел ответить)
+            pass
+        except Exception as e:
+            logging.error(f"Ошибка таймера: {e}")
+
+    # Создаем задачу таймера и сохраняем её в словарь
+    timer_task = asyncio.create_task(time_is_up())
+    active_timers[user_id] = timer_task
             # 3. Отправляем результат
             msg = f"✅ **Викторина завершена!**\n\n"
             msg += f"📊 **Твой результат:**\n"
@@ -691,6 +725,12 @@ async def send_quiz_question(bot, user_id, quiz_id, q_index):
 # 10. ОБРАБОТКА ОТВЕТА (В ЛС)
 @dp.callback_query(F.data.startswith("ans_"))
 async def process_answer(cb: CallbackQuery):
+    # 🔹 ОТМЕНА ТАЙМЕРА (добавь это!)
+    user_id = cb.from_user.id
+    if user_id in active_timers:
+        active_timers[user_id].cancel()
+        del active_timers[user_id]
+    # 🔹 Конец отмены таймера
     _, quiz_id, q_idx, answer_idx = cb.data.split("_")
     quiz_id, q_idx, answer_idx = int(quiz_id), int(q_idx), int(answer_idx)
     
