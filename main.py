@@ -47,7 +47,8 @@ async def init_db():
             last_claim TEXT, is_admin INTEGER DEFAULT 0)''')
         await conn.execute('''CREATE TABLE IF NOT EXISTS transactions (
             id SERIAL PRIMARY KEY, sender_id BIGINT, receiver_id BIGINT,
-            amount INTEGER, type TEXT, created_at TIMESTAMP DEFAULT NOW())''')        await conn.execute('''CREATE TABLE IF NOT EXISTS catalog (
+            amount INTEGER, type TEXT, created_at TIMESTAMP DEFAULT NOW())''')
+        await conn.execute('''CREATE TABLE IF NOT EXISTS catalog (
             id SERIAL PRIMARY KEY, name TEXT, description TEXT, price INTEGER, image_url TEXT)''')
         await conn.execute('''CREATE TABLE IF NOT EXISTS quizzes (
             id SERIAL PRIMARY KEY, chat_id BIGINT, message_id INTEGER,
