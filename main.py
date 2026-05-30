@@ -714,7 +714,8 @@ async def send_quiz_question(user_id: int, quiz_id: int, q_index: int = 0):
             logging.error(f"Ошибка таймера: {e}")
 
     # Создаем задачу таймера и сохраняем её в словарь
-    timer_task = asyncio.create_task(time_is_up())    active_timers[user_id] = timer_task
+    timer_task = asyncio.create_task(time_is_up())
+    active_timers[user_id] = timer_task
         
 
 # 10. ОБРАБОТКА ОТВЕТА (В ЛС)
