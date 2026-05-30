@@ -8,6 +8,9 @@ from aiogram.filters import Command
 from aiogram.types import ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove, InlineKeyboardMarkup, InlineKeyboardButton, Message, CallbackQuery
 from flask import Flask
 import threading
+from aiogram.fsm.context import FSMContext
+from aiogram.fsm.state import State, StatesGroup
+import random
 
 app = Flask(__name__)
 
@@ -125,7 +128,49 @@ async def remove_from_catalog(item_id: int):
 async def get_catalog():
     async with pool.acquire() as conn:
         return await conn.fetch('SELECT id, name, description, price, image_url FROM catalog')
+# === ПОМОЩНИКИ ДЛЯ КАЗИНО ===
+def get_roulette_color(num):
+    red = [1, 3, 5, 7, 9, 12, 14, 16, 18, 19, 21, 23, 25, 27, 30, 32, 34, 36]
+    if num == 0: return "🟢"
+    return "🔴" if num in red else "⚫"
 
+async def deduct_balance(user_id, amount):
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow('SELECT balance FROM users WHERE user_id = $1', user_id)
+        if not row or row['balance'] < amount:
+            return False, 0
+        await conn.execute('UPDATE users SET balance = balance - $1 WHERE user_id = $2', amount, user_id)
+        return True, row['balance'] - amount
+
+async def add_winnings(user_id, amount, bet, game_type):
+    async with pool.acquire() as conn:
+        await conn.execute('UPDATE users SET balance = balance + $1 WHERE user_id = $2', amount, user_id)
+        await conn.execute(
+            'INSERT INTO transactions (sender_id, receiver_id, amount, type) VALUES (0, $1, $2, $3)',
+            user_id, amount, f'{game_type}_win'
+        )
+        row = await conn.fetchrow('SELECT balance FROM users WHERE user_id = $1', user_id)
+        return row['balance']
+
+async def log_loss(user_id, bet, game_type):
+    async with pool.acquire() as conn:
+        await conn.execute(
+            'INSERT INTO transactions (sender_id, receiver_id, amount, type) VALUES (0, $1, $2, $3)',
+            user_id, -bet, f'{game_type}_lose'
+        )
+@dp.message(Command("casino", "казино"))
+async def cmd_casino_menu(message: Message):
+    text = (
+        "🎰 **КАЗИНО BLESSCOIN**\n\n"
+        "Доступные игры:\n"
+        "🎰 /slots [ставка] — Игровые автоматы\n"
+        "🎡 /roulette [ставка] [цвет/число] — Рулетка\n"
+        "🃏 /blackjack [ставка] — Блэкджек\n"
+        "📈 /crash [ставка] — Крэш\n\n"
+        "⚠️ Шанс есть всегда, но удача любит смелых!"
+    )
+    await message.answer(text, parse_mode="Markdown")
+    
 @dp.message(Command("start"))
 async def cmd_start(message: Message):
     user_id = message.from_user.id
@@ -829,8 +874,301 @@ async def finish_quiz_task(quiz_id, delay):
                 print(f"✅ Старое сообщение откреплено")
             except Exception as e:
                 print(f"⚠️ Не удалось открепить: {e}")
-                
-async def main():
+# === СОСТОЯНИЯ ДЛЯ БЛЭКДЖЕКА ===
+class BlackjackStates(StatesGroup):
+    playing = State()
+# === ИГРА: СЛОТЫ ===
+@dp.message(Command("slots", "слоты"))
+async def cmd_slots(message: Message):
+    args = message.text.split()
+    if len(args) < 2:
+        return await message.answer(" Введите ставку: `/slots 100`")
+    try:
+        bet = int(args[1])
+        if bet < 10: return await message.answer("❌ Минимальная ставка: 10 монет")
+    except ValueError:
+        return await message.answer("❌ Некорректная ставка")
+
+    user_id = message.from_user.id
+    ok, new_bal = await deduct_balance(user_id, bet)
+    if not ok:
+        return await message.answer("❌ Недостаточно монет!")
+
+    symbols = ["🍒", "", "🍉", "", "💎", "7️", "🔔"]
+    
+    # Отправляем сообщение с "вращающимися" символами
+    msg = await message.answer("🎰 **КРУТИМ БАРАБАНЫ** \n\n🍒 |  | 🍒")
+    
+    await asyncio.sleep(0.5)
+    await msg.edit_text("🎰 **КРУТИМ БАРАБАНЫ** 🎰\n\n🍇 | 7️⃣ | 🍇", parse_mode="Markdown")
+    
+    await asyncio.sleep(0.5)
+    
+    # Финальный результат
+    reel = [random.choice(symbols) for _ in range(3)]
+    
+    win_amount = 0
+    result_text = ""
+    
+    if reel[0] == reel[1] == reel[2] == "7️⃣":
+        win_amount = bet * 50
+        result_text = " **ДЖЕКПОТ 777!** 🔥"
+    elif reel[0] == reel[1] == reel[2]:
+        win_amount = bet * 10
+        result_text = "✨ **ТРИ В РЯД!** ✨"
+    elif reel[0] == reel[1] or reel[1] == reel[2] or reel[0] == reel[2]:
+        win_amount = bet * 2
+        result_text = "✅ **ДВА СОВПАДЕНИЯ!**"
+    else:
+        result_text = "❌ **НЕ ПОВЕЗЛО**"
+        await log_loss(user_id, bet, "slots")
+        await msg.edit_text(f"🎰 **РЕЗУЛЬТАТ** 🎰\n\n{' | '.join(reel)}\n\n{result_text}\n\n💸 Проигрыш: **{bet}**", parse_mode="Markdown")
+        return
+
+    if win_amount > 0:
+        final_bal = await add_winnings(user_id, win_amount, bet, "slots")
+        await msg.edit_text(
+            f"🎰 **РЕЗУЛЬТАТ** 🎰\n\n{' | '.join(reel)}\n\n{result_text}\n Выигрыш: **{win_amount}**\n💰 Баланс: **{final_bal}**",
+            parse_mode="Markdown"
+        )
+# === ИГРА: РУЛЕТКА ===
+@dp.message(Command("roulette", "рулетка"))
+async def cmd_roulette(message: Message):
+    args = message.text.split()
+    if len(args) < 3:
+        return await message.answer(" Формат: `/roulette [ставка] [красное/чёрное/зелёное/число]`")
+    
+    try:
+        bet = int(args[1])
+        if bet < 10: return await message.answer("❌ Мин. ставка 10")
+    except: return await message.answer("❌ Ошибка ставки")
+
+    choice = args[2].lower()
+    user_id = message.from_user.id
+
+    ok, _ = await deduct_balance(user_id, bet)
+    if not ok: return await message.answer("❌ Недостаточно монет!")
+
+    msg = await message.answer("🎡 **БАРАБАН ВРАЩАЕТСЯ...**")
+    await asyncio.sleep(1.5)
+
+    number = random.randint(0, 36)
+    color = get_roulette_color(number)
+    color_name = "Зелёное" if number == 0 else ("Красное" if color == "🔴" else "Чёрное")
+
+    win_amount = 0
+    won = False
+
+    # Проверка выигрыша
+    if choice in ["красное", "красный", "red"]:
+        if color == "🔴": win_amount = bet * 2; won = True
+    elif choice in ["чёрное", "черное", "black"]:
+        if color == "⚫": win_amount = bet * 2; won = True
+    elif choice in ["зелёное", "зеленое", "green", "0"]:
+        if number == 0: win_amount = bet * 14; won = True
+    else:
+        try:
+            pick_num = int(choice)
+            if pick_num == number: win_amount = bet * 36; won = True
+        except:
+            await log_loss(user_id, bet, "roulette")
+            await msg.edit_text(f" **ВЫПАЛО: {number} {color_name}**\n❌ Вы сделали неверную ставку.")
+            return
+
+    if won:
+        final_bal = await add_winnings(user_id, win_amount, bet, "roulette")
+        await msg.edit_text(
+            f"🎡 **ВЫПАЛО: {number} {color_name}**\n\n🎉 **ВЫИГРЫШ!** +{win_amount} монет\n💰 Баланс: {final_bal}",
+            parse_mode="Markdown"
+        )
+    else:
+        await log_loss(user_id, bet, "roulette")
+        await msg.edit_text(f"🎡 **ВЫПАЛО: {number} {color_name}**\n\n Вы проиграли {bet} монет.")
+# === ИГРА: БЛЭКДЖЕК ===
+@dp.message(Command("blackjack", "блэкджек"))
+async def cmd_blackjack_start(message: Message, state: FSMContext):
+    args = message.text.split()
+    if len(args) < 2: return await message.answer("🃏 Формат: `/blackjack [ставка]`")
+    try:
+        bet = int(args[1])
+        if bet < 10: return await message.answer("Мин. ставка 10")
+    except: return await message.answer("Ошибка ставки")
+
+    user_id = message.from_user.id
+    ok, _ = await deduct_balance(user_id, bet)
+    if not ok: return await message.answer("❌ Недостаточно монет!")
+
+    # Раздача карт (упрощённая: картинки = 10, туз = 11)
+    player_hand = [random.randint(2, 11), random.randint(2, 11)]
+    dealer_hand = [random.randint(2, 11)] # Одна карта скрыта
+    
+    p_score = sum(player_hand)
+    
+    # Сохраняем данные игры
+    await state.set_data({"bet": bet, "player_hand": player_hand, "dealer_hand": dealer_hand})
+    await state.set_state(BlackjackStates.playing)
+
+    btns = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="👆 ЕЩЁ", callback_data="bj_hit"), InlineKeyboardButton(text="✋ ХВАТИТ", callback_data="bj_stand")]
+    ])
+    
+    text = (
+        f"🃏 **БЛЭКДЖЕК** (Ставка: {bet})\n\n"
+        f"Ваши карты: {player_hand} (Сумма: {p_score})\n"
+        f"Карты дилера: [{dealer_hand[0]}, ❓]"
+    )
+    await message.answer(text, reply_markup=btns, parse_mode="Markdown")
+
+@dp.callback_query(BlackjackStates.playing)
+async def process_blackjack(cb: CallbackQuery, state: FSMContext):
+    user_id = cb.from_user.id
+    data = await state.get_data()
+    bet = data["bet"]
+    p_hand = data["player_hand"]
+    d_hand = data["dealer_hand"]
+
+    if cb.data == "bj_hit":
+        # Берем карту
+        new_card = random.randint(2, 11)
+        p_hand.append(new_card)
+        p_score = sum(p_hand)
+
+        await state.update_data(player_hand=p_hand)
+        if p_score > 21:
+            await log_loss(user_id, bet, "blackjack")
+            text = (
+                f"🃏 **ПЕРЕБОР!** 💥\n\n"
+                f"Ваши карты: {p_hand} (Сумма: {p_score})\n"
+                f"Дилер выиграл!\n💸 Проигрыш: {bet}"
+            )
+            await cb.message.edit_text(text, parse_mode="Markdown")
+            await state.clear()
+        else:
+            text = (
+                f"🃏 **БЛЭКДЖЕК** (Ставка: {bet})\n\n"
+                f"Ваши карты: {p_hand} (Сумма: {p_score})\n"
+                f"Карты дилера: [{d_hand[0]}, ❓]"
+            )
+            btns = InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text=" ЕЩЁ", callback_data="bj_hit"), InlineKeyboardButton(text="✋ ХВАТИТ", callback_data="bj_stand")]
+            ])
+            await cb.message.edit_text(text, reply_markup=btns, parse_mode="Markdown")
+
+    elif cb.data == "bj_stand":
+        # Ход дилера (берет карты пока меньше 17)
+        while sum(d_hand) < 17:
+            d_hand.append(random.randint(2, 11))
+        
+        p_score = sum(p_hand)
+        d_score = sum(d_hand)
+
+        text = (
+            f"🃏 **РЕЗУЛЬТАТ**\n\n"
+            f"Ваши карты: {p_hand} ({p_score})\n"
+            f"Карты дилера: {d_hand} ({d_score})\n\n"
+        )
+
+        if d_score > 21 or p_score > d_score:
+            win = bet * 2
+            final_bal = await add_winnings(user_id, win, bet, "blackjack")
+            text += f"🎉 **ВЫ ВЫИГРАЛИ!** +{win} монет\n Баланс: {final_bal}"
+        elif p_score == d_score:
+            # Возврат ставки (ничья)
+            await add_winnings(user_id, bet, bet, "blackjack_draw") 
+            text += f"🤝 **НИЧЬЯ.** Ставка возвращена."
+        else:
+            text += f" **ДИЛЕР ВЫИГРАЛ.** Вы потеряли {bet} монет."
+            await log_loss(user_id, bet, "blackjack")
+
+        await cb.message.edit_text(text, parse_mode="Markdown")
+        await state.clear()
+        await cb.ans wer()
+# === ИГРА: КРЭШ ===
+active_crash_games = {}
+
+@dp.message(Command("crash", "крэш"))
+async def cmd_crash(message: Message):
+    args = message.text.split()
+    if len(args) < 2: return await message.answer("📈 Формат: `/crash [ставка]`")
+    try:
+        bet = int(args[1])
+        if bet < 10: return await message.answer("Мин. ставка 10")
+    except: return await message.answer("Ошибка ставки")
+
+    user_id = message.from_user.id
+    ok, _ = await deduct_balance(user_id, bet)
+    if not ok: return await message.answer("❌ Недостаточно монет!")
+
+    # Определяем точку краша заранее
+    crash_point = round(random.uniform(1.0, 3.0), 2)
+    if random.random() < 0.1: crash_point = round(random.uniform(3.0, 10.0), 2)
+
+    active_crash_games[user_id] = {"status": "running", "crash_point": crash_point, "bet": bet}
+    
+    msg = await message.answer(f"📈 **КРЭШ** (Ставка: {bet})\n\nМножитель: **x1.00**")
+
+    current_mult = 1.00
+    step = 0.10
+    
+    while True:
+        if user_id not in active_crash_games:
+            return
+        
+        game = active_crash_games[user_id]
+        if game["status"] != "running":
+            return
+        
+        current_mult += step
+        step += 0.02
+        
+        btns = InlineKeyboardMarkup(inline_keyboard=[[
+            InlineKeyboardButton(text=f"💰 ЗАБРАТЬ x{current_mult:.2f}", callback_data=f"crash_out_{current_mult:.2f}")
+        ]])
+        
+        try:
+            await msg.edit_text(
+                f"📈 **КРЭШ** (Ставка: {bet})\n\nМножитель: **x{current_mult:.2f}**",
+                reply_markup=btns
+            )
+        except:
+            pass
+            
+        if current_mult >= crash_point:
+            active_crash_games.pop(user_id, None)
+            await log_loss(user_id, bet, "crash")
+            await msg.edit_text(
+                f"📉 **КРАШ!** 💥\n\nМножитель: **x{current_mult:.2f}**\n\n💸 Вы не успели! Проигрыш: {bet}",
+                parse_mode="Markdown"
+            )
+            break
+        
+        await asyncio.sleep(0.5)
+
+@dp.callback_query(F.data.startswith("crash_out_"))
+async def crash_cashout(cb: CallbackQuery):
+    user_id = cb.from_user.id
+    if user_id not in active_crash_games:
+        return await cb.answer("Игра уже завершена!", show_alert=True)
+    
+    game = active_crash_games[user_id]
+    if game["status"] != "running":
+        return await cb.answer("Игра уже завершена!", show_alert=True)
+
+    win_mult = float(cb.data.split("_")[2])
+    bet = game["bet"]
+    win_amount = int(bet * win_mult)
+    
+    game["status"] = "won"
+    active_crash_games.pop(user_id, None)
+    
+    final_bal = await add_winnings(user_id, win_amount, bet, "crash")
+    
+    await cb.message.edit_text(
+        f"💰 **ВЫ ЗАБРАЛИ!**\n\nМножитель: **x{win_mult:.2f}**\nВыигрыш: **+{win_amount}**\nБаланс: {final_bal}",
+        parse_mode="Markdown"
+    )
+    await cb.answer(f"Вы забрали {win_amount}!")
+async def main()
     await init_db()
     logger.info("🤖 Запущен с PostgreSQL")
     await dp.start_polling(bot)
