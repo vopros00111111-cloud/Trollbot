@@ -644,24 +644,24 @@ async def send_quiz_question(user_id: int, quiz_id: int, q_index: int = 0):
         
     if q_index >= len(questions):
     # Викторина завершена — считаем результат
-    async with pool.acquire() as conn:
-        score = await conn.fetchval(
-            "SELECT COUNT(*) FROM quiz_answers WHERE quiz_id=$1 AND user_id=$2 AND is_correct=True",
-            quiz_id, user_id
-        )
-        duration = await conn.fetchval(
-            "SELECT EXTRACT(EPOCH FROM (NOW() - MIN(started_at))) FROM quiz_answers WHERE quiz_id=$1 AND user_id=$2",
-            quiz_id, user_id
-        )
+        async with pool.acquire() as conn:
+            score = await conn.fetchval(
+                "SELECT COUNT(*) FROM quiz_answers WHERE quiz_id=$1 AND user_id=$2 AND is_correct=True",
+                quiz_id, user_id
+            )
+            duration = await conn.fetchval(
+                "SELECT EXTRACT(EPOCH FROM (NOW() - MIN(started_at))) FROM quiz_answers WHERE quiz_id=$1 AND user_id=$2",
+                quiz_id, user_id
+            )
     
-    msg = f"✅ **Викторина завершена!**\n\n"
-    msg += f"🎯 **Твой результат:**\n"
-    msg += f"✅ Правильных ответов: **{score}/{len(questions)}**\n"
-    msg += f"⏱️ Твое время: **{int(duration) if duration else 0} сек.**\n\n"
-    msg += f"🏆 Итоги и награды будут опубликованы в чате после окончания таймера."
+        msg = f"✅ **Викторина завершена!**\n\n"
+        msg += f"🎯 **Твой результат:**\n"
+        msg += f"✅ Правильных ответов: **{score}/{len(questions)}**\n"
+        msg += f"⏱️ Твое время: **{int(duration) if duration else 0} сек.**\n\n"
+        msg += f"🏆 Итоги и награды будут опубликованы в чате после окончания таймера."
     
-    await bot.send_message(user_id, msg, parse_mode="Markdown")
-    return
+        await bot.send_message(user_id, msg, parse_mode="Markdown")
+        return
     question = questions[q_index]
     
     # 🔹 Отправляем вопрос
