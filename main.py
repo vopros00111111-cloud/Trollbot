@@ -1168,7 +1168,7 @@ async def crash_cashout(cb: CallbackQuery):
         parse_mode="Markdown"
     )
     await cb.answer(f"Вы забрали {win_amount}!")
-async def main()
+async def main():
     await init_db()
     logger.info("🤖 Запущен с PostgreSQL")
     await dp.start_polling(bot)
