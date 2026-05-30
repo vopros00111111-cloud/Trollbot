@@ -182,6 +182,7 @@ async def cmd_start(message: Message):
     text += "/claim — ежедневная награда\n"
     text += "/transfer — перевести монеты\n"
     text += "/catalog — магазин товаров\n"
+    text += "/casino — казино\n"
     text += "/help — полная справка"
     await message.answer(text, parse_mode="Markdown")
 
@@ -272,7 +273,9 @@ async def cmd_help(message: Message):
     text += "/claim — награда (раз в 24ч)\n"
     text += "/transfer @user сумма — перевод\n\n"
     text += "📦 **Каталог:**\n"
-    text += "/catalog — товары\n"
+    text += "/catalog — товары\n\n"
+    text += "🎰 Казино:\n"
+    text += "/casino — игры казино\n\n"
     text += "👑 **Админ:**\n"
     text += "/givemoney @user сумма — добавление монет пользователю\n"
     text += "/takemoney @user сумма — удаление монет у пользователя\n"
