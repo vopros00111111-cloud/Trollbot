@@ -643,12 +643,25 @@ async def send_quiz_question(user_id: int, quiz_id: int, q_index: int = 0):
         return await bot.send_message(user_id, "❌ Вопросы не найдены.")
         
     if q_index >= len(questions):
-        # Логика завершения викторины (твой старый код)
-        # ... (оставь как было, только убедись, что здесь нет таймеров) ...
-        score = await conn.fetchval(...) # твой код подсчета
-        await bot.send_message(user_id, f"✅ Викторина окончена! Твой счет: {score}")
-        return
-
+    # Викторина завершена — считаем результат
+    async with pool.acquire() as conn:
+        score = await conn.fetchval(
+            "SELECT COUNT(*) FROM quiz_answers WHERE quiz_id=$1 AND user_id=$2 AND is_correct=True",
+            quiz_id, user_id
+        )
+        duration = await conn.fetchval(
+            "SELECT EXTRACT(EPOCH FROM (NOW() - MIN(started_at))) FROM quiz_answers WHERE quiz_id=$1 AND user_id=$2",
+            quiz_id, user_id
+        )
+    
+    msg = f"✅ **Викторина завершена!**\n\n"
+    msg += f"🎯 **Твой результат:**\n"
+    msg += f"✅ Правильных ответов: **{score}/{len(questions)}**\n"
+    msg += f"⏱️ Твое время: **{int(duration) if duration else 0} сек.**\n\n"
+    msg += f"🏆 Итоги и награды будут опубликованы в чате после окончания таймера."
+    
+    await bot.send_message(user_id, msg, parse_mode="Markdown")
+    return
     question = questions[q_index]
     
     # 🔹 Отправляем вопрос
@@ -695,18 +708,7 @@ async def send_quiz_question(user_id: int, quiz_id: int, q_index: int = 0):
     # Создаем задачу таймера и сохраняем её в словарь
     timer_task = asyncio.create_task(time_is_up())
     active_timers[user_id] = timer_task
-            # 3. Отправляем результат
-            msg = f"✅ **Викторина завершена!**\n\n"
-            msg += f"📊 **Твой результат:**\n"
-            msg += f"✅ Правильных ответов: **{score}/{len(questions)}**\n"
-            msg += f"⏱️ Твое время: **{int(duration)} сек.**\n\n"
-            msg += "🏆 Итоги и награды будут опубликованы в чате после окончания таймера."
-            
-            await bot.send_message(user_id, msg, parse_mode="Markdown")
-            return  # Выходим, чтобы не отправлять следующий вопрос
-            
-        # ... дальше код отправки следующего вопроса ...
-            
+    return
         q = questions[q_index]
         
         # Теперь q — это словарь {'text': '...', 'options': [...], 'correct': 0}
