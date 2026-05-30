@@ -662,15 +662,20 @@ async def send_quiz_question(user_id: int, quiz_id: int, q_index: int = 0):
     
         await bot.send_message(user_id, msg, parse_mode="Markdown")
         return
-    question = questions[q_index]
-    
-    # 🔹 Отправляем вопрос
-    msg = await bot.send_message(
-        user_id,
-        f"❓ **Вопрос {q_index+1}/{len(questions)}**\n\n{question['text']}",
-        reply_markup=build_quiz_kb(question['options']), # твоя функция клавиатуры
-        parse_mode="Markdown"
-    )
+        q = questions[q_index]
+        
+        # Теперь q — это словарь {'text': '...', 'options': [...], 'correct': 0}
+        options = q['options']
+        
+        # Кнопки с ответами
+        btns = [[InlineKeyboardButton(text=opt, callback_data=f"ans_{quiz_id}_{q_index}_{i}")] for i, opt in enumerate(options)]
+        
+        await bot.send_message(
+            user_id, 
+            f"❓ **Вопрос {q_index + 1}/{len(questions)}**\n\n{q['text']}", 
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=btns),
+            parse_mode="Markdown"
+        )
     
     # 🔹 Запускаем таймер
     async def time_is_up():
@@ -709,20 +714,7 @@ async def send_quiz_question(user_id: int, quiz_id: int, q_index: int = 0):
     timer_task = asyncio.create_task(time_is_up())
     active_timers[user_id] = timer_task
     return
-        q = questions[q_index]
         
-        # Теперь q — это словарь {'text': '...', 'options': [...], 'correct': 0}
-        options = q['options']
-        
-        # Кнопки с ответами
-        btns = [[InlineKeyboardButton(text=opt, callback_data=f"ans_{quiz_id}_{q_index}_{i}")] for i, opt in enumerate(options)]
-        
-        await bot.send_message(
-            user_id, 
-            f"❓ **Вопрос {q_index + 1}/{len(questions)}**\n\n{q['text']}", 
-            reply_markup=InlineKeyboardMarkup(inline_keyboard=btns),
-            parse_mode="Markdown"
-        )
 
 # 10. ОБРАБОТКА ОТВЕТА (В ЛС)
 @dp.callback_query(F.data.startswith("ans_"))
