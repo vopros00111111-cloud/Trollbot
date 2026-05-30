@@ -633,6 +633,9 @@ async def quiz_click(cb: CallbackQuery):
     await cb.answer()
 
 # 9. ОТПРАВКА ВОПРОСА (В ЛС)
+def build_quiz_kb(options: list, quiz_id: int, q_index: int):
+    btns = [[InlineKeyboardButton(text=f"{i+1}. {opt}", callback_data=f"ans_{quiz_id}_{q_index}_{i}")] for i, opt in enumerate(options)]
+    return InlineKeyboardMarkup(inline_keyboard=btns)
 async def send_quiz_question(user_id: int, quiz_id: int, q_index: int = 0):
     # 🔹 Исправление 1: Получаем вопросы из таблицы quizzes (JSONB)
     async with pool.acquire() as conn:
@@ -675,7 +678,7 @@ async def send_quiz_question(user_id: int, quiz_id: int, q_index: int = 0):
     msg = await bot.send_message(
         user_id,
         text,
-        reply_markup=build_quiz_kb(question['options']),
+        reply_markup=build_quiz_kb(question['options'], quiz_id, q_index),
         parse_mode="Markdown"
     )
     
