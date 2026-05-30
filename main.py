@@ -689,14 +689,13 @@ async def send_quiz_question(user_id: int, quiz_id: int, q_index: int = 0):
             # 1. Редактируем сообщение (убираем кнопки)
             await bot.edit_message_text(
                 chat_id=user_id,
-                message_id=msg.message_id, # Теперь msg существует!
+                message_id=msg.message_id,
                 text=f"{text}\n\n⏰ **Время вышло!**",
                 reply_markup=None,
                 parse_mode="Markdown"
             )
             
             # 2. Записываем в БД как ошибку (0 баллов)
-            # 🔹 Исправление 3: Правильные колонки (question_index вместо question_id)
             async with pool.acquire() as conn:
                 await conn.execute(
                     "INSERT INTO quiz_answers (quiz_id, user_id, question_index, is_correct, response_time_sec, started_at) VALUES ($1, $2, $3, $4, $5, NOW())",
@@ -715,8 +714,7 @@ async def send_quiz_question(user_id: int, quiz_id: int, q_index: int = 0):
 
     # Создаем задачу таймера и сохраняем её в словарь
     timer_task = asyncio.create_task(time_is_up())
-    active_timers[user_id] = timer_task
-        
+    active_timers[(user_id, quiz_id, q_index)] = timer_task
 
 # 10. ОБРАБОТКА ОТВЕТА (В ЛС)
 @dp.callback_query(F.data.startswith("ans_"))
