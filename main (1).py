@@ -624,51 +624,55 @@ async def quiz_click(cb: CallbackQuery):
     # Проверка: не участвовал ли уже?
     async with pool.acquire() as conn:
         count = await conn.fetchval("SELECT COUNT(*) FROM quiz_answers WHERE quiz_id = $1 AND user_id = $2", quiz_id, user_id)
+    
     if count > 0:
-        return await cb.answer("Ты уже участвуешь! Ищи сообщение от бота в ЛС.", show_alert=True)        
-    await cb.bot.send_message(user_id, "🎮 **Викторина началась!**\nОтвечай на вопросы...", parse_mode="Markdown")
+        return await cb.answer("Ты уже участвуешь! Ищи сообщение от бота в ЛС.", show_alert=True)       
+        
+    await cb.bot.send_message(user_id, " **Викторина началась!**\nОтвечай на вопросы...", parse_mode="Markdown")
     await send_quiz_question(user_id, quiz_id, 0)
     await cb.answer()
 
 # 9. ОТПРАВКА ВОПРОСА (В ЛС)
 async def send_quiz_question(user_id: int, quiz_id: int, q_index: int = 0):
-    # Получаем вопросы из БД (твой старый код)
+    # 🔹 Исправление 1: Получаем вопросы из таблицы quizzes (JSONB)
     async with pool.acquire() as conn:
-        questions = await conn.fetch(
-            "SELECT * FROM quiz_questions WHERE quiz_id = $1 ORDER BY id", 
-            quiz_id
-        )
-    
+        row = await conn.fetchrow("SELECT questions FROM quizzes WHERE id = $1", quiz_id)
+        
+    if not row:
+        return await bot.send_message(user_id, "❌ Викторина не найдена.")
+
+    # Парсим JSON, если вопросы пришли строкой
+    questions = row['questions']
+    if isinstance(questions, str):
+        import json
+        questions = json.loads(questions)
+        
     if not questions:
         return await bot.send_message(user_id, "❌ Вопросы не найдены.")
         
+    # Если вопросы закончились — завершаем викторину
     if q_index >= len(questions):
-    # Викторина завершена — считаем результат
         async with pool.acquire() as conn:
             score = await conn.fetchval(
                 "SELECT COUNT(*) FROM quiz_answers WHERE quiz_id=$1 AND user_id=$2 AND is_correct=True",
                 quiz_id, user_id
             )
-            duration = await conn.fetchval(
-                "SELECT EXTRACT(EPOCH FROM (NOW() - MIN(started_at))) FROM quiz_answers WHERE quiz_id=$1 AND user_id=$2",
-                quiz_id, user_id
-            )
-    
+        
         msg = f"✅ **Викторина завершена!**\n\n"
         msg += f"🎯 **Твой результат:**\n"
-        msg += f"✅ Правильных ответов: **{score}/{len(questions)}**\n"
-        msg += f"⏱️ Твое время: **{int(duration) if duration else 0} сек.**\n\n"
+        msg += f"✅ Правильных ответов: **{score}/{len(questions)}**\n\n"
         msg += f"🏆 Итоги и награды будут опубликованы в чате после окончания таймера."
     
         await bot.send_message(user_id, msg, parse_mode="Markdown")
-        return
-        # 3. Берем текущий вопрос
+        return  # 🔹 Важно: выходим из функции, код ниже не выполнится
+    # 3. Берем текущий вопрос
     question = questions[q_index]
     
-    # 4. Формируем текст и отправляем
-    text = f" **Вопрос {q_index + 1}/{len(questions)}**\n\n{question['text']}"
+    # 4. Формируем текст
+    text = f"**Вопрос {q_index + 1}/{len(questions)}**\n\n{question['text']}"
     
-    await bot.send_message(
+    # 🔹 Исправление 2: Сохраняем отправленное сообщение в переменную msg
+    msg = await bot.send_message(
         user_id,
         text,
         reply_markup=build_quiz_kb(question['options']),
@@ -685,17 +689,18 @@ async def send_quiz_question(user_id: int, quiz_id: int, q_index: int = 0):
             # 1. Редактируем сообщение (убираем кнопки)
             await bot.edit_message_text(
                 chat_id=user_id,
-                message_id=msg.message_id,
-                text=f"❓ **Вопрос {q_index+1}/{len(questions)}**\n\n{question['text']}\n\n⏰ **Время вышло!**",
+                message_id=msg.message_id, # Теперь msg существует!
+                text=f"{text}\n\n⏰ **Время вышло!**",
                 reply_markup=None,
                 parse_mode="Markdown"
             )
             
             # 2. Записываем в БД как ошибку (0 баллов)
+            # 🔹 Исправление 3: Правильные колонки (question_index вместо question_id)
             async with pool.acquire() as conn:
                 await conn.execute(
-                    "INSERT INTO quiz_answers (quiz_id, user_id, question_id, is_correct, started_at) VALUES ($1, $2, $3, $4, NOW())",
-                    quiz_id, user_id, question['id'], False
+                    "INSERT INTO quiz_answers (quiz_id, user_id, question_index, is_correct, response_time_sec, started_at) VALUES ($1, $2, $3, $4, $5, NOW())",
+                    quiz_id, user_id, q_index, False, QUIZ_TIME_LIMIT
                 )
             
             # 3. Ждем немного и переходим к следующему вопросу
@@ -709,9 +714,7 @@ async def send_quiz_question(user_id: int, quiz_id: int, q_index: int = 0):
             logging.error(f"Ошибка таймера: {e}")
 
     # Создаем задачу таймера и сохраняем её в словарь
-    timer_task = asyncio.create_task(time_is_up())
-    active_timers[user_id] = timer_task
-    return
+    timer_task = asyncio.create_task(time_is_up())    active_timers[user_id] = timer_task
         
 
 # 10. ОБРАБОТКА ОТВЕТА (В ЛС)
