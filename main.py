@@ -751,7 +751,7 @@ async def process_answer(cb: CallbackQuery):
         
     await cb.answer("Ответ принят!")
     await cb.message.delete() 
-    await send_quiz_question(cb.bot, cb.from_user.id, quiz_id, q_idx + 1)
+    await send_quiz_question(cb.from_user.id, quiz_id, q_idx + 1)
 # 11. ФИНАЛ И НАГРАДЫ
 async def finish_quiz_task(quiz_id, delay):
     await asyncio.sleep(delay)
