@@ -662,20 +662,18 @@ async def send_quiz_question(user_id: int, quiz_id: int, q_index: int = 0):
     
         await bot.send_message(user_id, msg, parse_mode="Markdown")
         return
-        q = questions[q_index]
-        
-        # Теперь q — это словарь {'text': '...', 'options': [...], 'correct': 0}
-        options = q['options']
-        
-        # Кнопки с ответами
-        btns = [[InlineKeyboardButton(text=opt, callback_data=f"ans_{quiz_id}_{q_index}_{i}")] for i, opt in enumerate(options)]
-        
-        await bot.send_message(
-            user_id, 
-            f"❓ **Вопрос {q_index + 1}/{len(questions)}**\n\n{q['text']}", 
-            reply_markup=InlineKeyboardMarkup(inline_keyboard=btns),
-            parse_mode="Markdown"
-        )
+        # 3. Берем текущий вопрос
+    question = questions[q_index]
+    
+    # 4. Формируем текст и отправляем
+    text = f" **Вопрос {q_index + 1}/{len(questions)}**\n\n{question['text']}"
+    
+    await bot.send_message(
+        user_id,
+        text,
+        reply_markup=build_quiz_kb(question['options']),
+        parse_mode="Markdown"
+    )
     
     # 🔹 Запускаем таймер
     async def time_is_up():
