@@ -627,7 +627,7 @@ async def quiz_click(cb: CallbackQuery):
     if count > 0:
         return await cb.answer("Ты уже участвуешь! Ищи сообщение от бота в ЛС.", show_alert=True)        
     await cb.bot.send_message(user_id, "🎮 **Викторина началась!**\nОтвечай на вопросы...", parse_mode="Markdown")
-    await send_quiz_question(cb.bot, user_id, quiz_id, 0)
+    await send_quiz_question(user_id, quiz_id, 0)
     await cb.answer()
 
 # 9. ОТПРАВКА ВОПРОСА (В ЛС)
