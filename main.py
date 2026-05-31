@@ -1379,15 +1379,19 @@ async def process_mines(cb: CallbackQuery, state: FSMContext):
         )
         await cb.message.edit_text(text, reply_markup=kb, parse_mode="Markdown")
         await cb.answer(f"💎 x{current_mult}")
-
-
-@dp.callback_query(MinesStates.playing, F.data == "mine_cashout")
+        
+@dp.callback_query(F.data == "mine_cashout")
 async def mines_cashout(cb: CallbackQuery, state: FSMContext):
     user_id = cb.from_user.id
-    data = await state.get_data()
     
-    if data["status"] != "playing":
-        return await cb.answer("Игра завершена!", show_alert=True)
+    # Проверяем состояние вручную
+    current_state = await state.get_state()
+    if current_state != MinesStates.playing.state:
+        return await cb.answer("Игра не активна!", show_alert=True)
+    
+    data = await state.get_data()
+    if not data or data.get("status") != "playing":
+        return await cb.answer("Игра уже завершена!", show_alert=True)
     
     bet = data["bet"]
     mines_count = data["mines_count"]
