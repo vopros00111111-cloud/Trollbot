@@ -13,6 +13,7 @@ from aiogram.fsm.state import State, StatesGroup
 import random
 import math
 import time
+from aiogram.types import ChatPermissions
 
 app = Flask(__name__)
 
