@@ -167,6 +167,7 @@ async def cmd_casino_menu(message: Message):
         "🎰 /slots [ставка] — Игровые автоматы\n"
         "🎡 /roulette [ставка] [цвет/число] — Рулетка\n"
         "🃏 /blackjack [ставка] — Блэкджек\n"
+        "⛏️ /mines [ставка] [количество мин] — Сапёр\n"
         "📈 /crash [ставка] — Крэш\n\n"
         "⚠️ Шанс есть всегда, но удача любит смелых!"
     )
@@ -272,6 +273,8 @@ async def cmd_help(message: Message):
     text += "/start — начать работу\n"
     text += "/balance — баланс\n"
     text += "/claim — награда (раз в 24ч)\n"
+    text += "/top — топ 10 по монетам\n"
+    text += "/profile — твой профиль\n"
     text += "/transfer @user сумма — перевод\n\n"
     text += "📦 **Каталог:**\n"
     text += "/catalog — товары\n\n"
@@ -1179,16 +1182,20 @@ async def crash_cashout(cb: CallbackQuery):
 @dp.message(Command("top", "топ"))
 async def cmd_top(message: Message):
     async with pool.acquire() as conn:
-        rows = await conn.fetch('SELECT username, balance FROM users WHERE balance > 0 ORDER BY balance DESC LIMIT 10')
+        rows = await conn.fetch(
+            'SELECT username, balance FROM users WHERE balance > 0 AND username IS NOT NULL ORDER BY balance DESC LIMIT 10'
+        )
     
     if not rows:
         return await message.answer("🏆 Топ пока пуст. Стань первым!")
     
-    text = "🏆 **ТОП-10 ИГРОКОВ**\n\n"
+    text = "🏆 *ТОП\-10 ИГРОКОВ*\n\n"
     medals = ["🥇", "🥈", "🥉"]
     for i, row in enumerate(rows):
-        prefix = medals[i] if i < 3 else f"{i+1}."
-        text += f"{prefix} @{row['username']} — **{row['balance']}** 💰\n"
+        prefix = medals[i] if i < 3 else f"{i+1}\."
+        # Экранируем спецсимволы в юзернейме
+        safe_name = str(row['username']).replace('_', '\_').replace('*', '\*').replace('[', '\[')
+        text += f"{prefix} @{safe_name} — *{row['balance']}* 💰\n"
     
     await message.answer(text, parse_mode="Markdown")
 @dp.message(Command("profile", "профиль"))
