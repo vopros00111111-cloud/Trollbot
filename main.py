@@ -1382,7 +1382,8 @@ async def process_mines(cb: CallbackQuery, state: FSMContext):
 
 
 @dp.callback_query(MinesStates.playing, F.data == "mine_cashout")
-async def mines_cashout(cb: CallbackQuery, state: FSMContext):    user_id = cb.from_user.id
+async def mines_cashout(cb: CallbackQuery, state: FSMContext):
+    user_id = cb.from_user.id
     data = await state.get_data()
     
     if data["status"] != "playing":
