@@ -1302,7 +1302,7 @@ async def cmd_mines_start(message: Message, state: FSMContext):
     await message.answer(text, reply_markup=kb, parse_mode="Markdown")
 
 
-@dp.callback_query(MinesStates.playing, F.data.startswith("mine_"))
+@dp.callback_query(MinesStates.playing, F.data.regexp(r"^mine_\d+$"))
 async def process_mines(cb: CallbackQuery, state: FSMContext):
     user_id = cb.from_user.id
     cell_index = int(cb.data.split("_")[1])
