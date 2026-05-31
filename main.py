@@ -1334,7 +1334,7 @@ async def process_mines(cb: CallbackQuery, state: FSMContext):
             else:
                 reveal_text += "⬜"
                 if (i + 1) % 5 == 0:
-                reveal_text += "\n"
+                    reveal_text += "\n"
         
         text = (
             f"💥 **БОМБА!**\n\n{reveal_text}\n"
