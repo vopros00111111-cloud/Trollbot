@@ -169,8 +169,7 @@ async def cmd_casino_menu(message: Message):
         "🎰 /slots [ставка] — Игровые автоматы\n"
         "🎡 /roulette [ставка] [цвет/число] — Рулетка\n"
         "🃏 /blackjack [ставка] — Блэкджек\n"
-        "⛏️ /mines [ставка] [количество мин] — Сапёр\n"
-        "📈 /crash [ставка] — Крэш\n\n"
+        "⛏️ /mines [ставка] [количество мин] — Сапёр\n\n"
         "⚠️ Шанс есть всегда, но удача любит смелых!"
     )
     await message.answer(text, parse_mode="Markdown")
@@ -959,7 +958,7 @@ async def cmd_slots(message: Message):
     if not ok:
         return await message.answer("❌ Недостаточно монет!")
 
-    symbols = ["🍒", "", "🍉", "", "💎", "7️", "🔔"]
+    symbols = ["🍒", "❓", "🍉", "🍫", "💎", "7️", "🔔"]
     
     # Отправляем сообщение с "вращающимися" символами
     msg = await message.answer("🎰 **КРУТИМ БАРАБАНЫ** \n\n🍒 |  | 🍒")
@@ -1166,93 +1165,6 @@ CASINO_SPAM_LIMIT = 3       # макс команд
 CASINO_SPAM_WINDOW = 60     # секунд (1 минута)
 CASINO_MUTE_DURATION = 1800 # секунд (30 минут)
 
-@dp.message(Command("crash", "крэш"))
-async def cmd_crash(message: Message):
-    # 🔹 АНТИ-СПАМ ПРОВЕРКА
-    if await check_casino_spam(message.from_user.id, message.chat.id, bot):
-        return
-    
-    args = message.text.split()
-    # ... остальной код без изменений ...
-    if len(args) < 2: return await message.answer("📈 Формат: `/crash [ставка]`")
-    try:
-        bet = int(args[1])
-        if bet < 10: return await message.answer("Мин. ставка 10")
-    except: return await message.answer("Ошибка ставки")
-
-    user_id = message.from_user.id
-    ok, _ = await deduct_balance(user_id, bet)
-    if not ok: return await message.answer("❌ Недостаточно монет!")
-
-    # Определяем точку краша заранее
-    crash_point = round(random.uniform(1.0, 3.0), 2)
-    if random.random() < 0.1: crash_point = round(random.uniform(3.0, 10.0), 2)
-
-    active_crash_games[user_id] = {"status": "running", "crash_point": crash_point, "bet": bet}
-    
-    msg = await message.answer(f"📈 **КРЭШ** (Ставка: {bet})\n\nМножитель: **x1.00**")
-
-    current_mult = 1.00
-    step = 0.10
-    
-    while True:
-        if user_id not in active_crash_games:
-            return
-        
-        game = active_crash_games[user_id]
-        if game["status"] != "running":
-            return
-        
-        current_mult += step
-        step += 0.02
-        
-        btns = InlineKeyboardMarkup(inline_keyboard=[[
-            InlineKeyboardButton(text=f"💰 ЗАБРАТЬ x{current_mult:.2f}", callback_data=f"crash_out_{current_mult:.2f}")
-        ]])
-        
-        try:
-            await msg.edit_text(
-                f"📈 **КРЭШ** (Ставка: {bet})\n\nМножитель: **x{current_mult:.2f}**",
-                reply_markup=btns
-            )
-        except:
-            pass
-            
-        if current_mult >= crash_point:
-            active_crash_games.pop(user_id, None)
-            await log_loss(user_id, bet, "crash")
-            await msg.edit_text(
-                f"📉 **КРАШ!** 💥\n\nМножитель: **x{current_mult:.2f}**\n\n💸 Вы не успели! Проигрыш: {bet}",
-                parse_mode="Markdown"
-            )
-            break
-        
-        await asyncio.sleep(0.5)
-
-@dp.callback_query(F.data.startswith("crash_out_"))
-async def crash_cashout(cb: CallbackQuery):
-    user_id = cb.from_user.id
-    if user_id not in active_crash_games:
-        return await cb.answer("Игра уже завершена!", show_alert=True)
-    
-    game = active_crash_games[user_id]
-    if game["status"] != "running":
-        return await cb.answer("Игра уже завершена!", show_alert=True)
-
-    win_mult = float(cb.data.split("_")[2])
-    bet = game["bet"]
-    win_amount = int(bet * win_mult)
-    
-    game["status"] = "won"
-    active_crash_games.pop(user_id, None)
-    
-    final_bal = await add_winnings(user_id, win_amount, bet, "crash")
-    
-    await cb.message.edit_text(
-        f"💰 **ВЫ ЗАБРАЛИ!**\n\nМножитель: **x{win_mult:.2f}**\nВыигрыш: **+{win_amount}**\nБаланс: {final_bal}",
-        parse_mode="Markdown"
-    )
-    await cb.answer(f"Вы забрали {win_amount}!")
 # === СОЦИАЛКА: ТОП И ПРОФИЛЬ ===
 @dp.message(Command("top", "топ"))
 async def cmd_top(message: Message):
