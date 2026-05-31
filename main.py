@@ -12,6 +12,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 import random
 import math
+import time
 
 app = Flask(__name__)
 
@@ -887,9 +888,57 @@ class BlackjackStates(StatesGroup):
 # === СОСТОЯНИЯ ДЛЯ САПЁРА ===
 class MinesStates(StatesGroup):
     playing = State()
+    
+async def check_casino_spam(user_id: int, chat_id: int, bot: Bot) -> bool:
+    """
+    Проверяет спам командами казино.
+    Возвращает True если пользователь ЗАМУЧЕН (нужно остановить выполнение команды).
+    """
+    now = time.time()
+    
+    # Инициализируем список если нет
+    if user_id not in casino_command_times:
+        casino_command_times[user_id] = []
+    
+    # Убираем старые записи (старше 1 минуты)
+    casino_command_times[user_id] = [
+        t for t in casino_command_times[user_id] 
+        if now - t < CASINO_SPAM_WINDOW
+    ]
+    
+    # Проверяем лимит
+    if len(casino_command_times[user_id]) >= CASINO_SPAM_LIMIT:
+        # МУТИМ на 30 минут
+        try:
+            until_date = int(now + CASINO_MUTE_DURATION)
+            await bot.restrict_chat_member(
+                chat_id=chat_id,
+                user_id=user_id,
+                permissions=ChatPermissions(can_send_messages=False),
+                until_date=until_date
+            )
+            await bot.send_message(
+                chat_id=chat_id,
+                text=f"🔇 <a href='tg://user?id={user_id}'>Игрок</a> получил мут на 30 минут за спам казино!\nНе больше 3 игр в минуту.",
+                parse_mode="HTML"
+            )
+        except Exception as e:
+            logging.error(f"Не удалось замутить {user_id}: {e}")
+        
+        # Сбрасываем счётчик
+        casino_command_times[user_id] = []
+        return True  # Замучен, команду выполнять НЕЛЬЗЯ
+    
+    # Добавляем текущее время
+    casino_command_times[user_id].append(now)
+    return False  # Не замучен, можно играть
+    
 # === ИГРА: СЛОТЫ ===
 @dp.message(Command("slots", "слоты"))
 async def cmd_slots(message: Message):
+    # 🔹 АНТИ-СПАМ ПРОВЕРКА
+    if await check_casino_spam(message.from_user.id, message.chat.id, bot):
+        return
     args = message.text.split()
     if len(args) < 2:
         return await message.answer(" Введите ставку: `/slots 100`")
@@ -944,7 +993,12 @@ async def cmd_slots(message: Message):
 # === ИГРА: РУЛЕТКА ===
 @dp.message(Command("roulette", "рулетка"))
 async def cmd_roulette(message: Message):
+    # 🔹 АНТИ-СПАМ ПРОВЕРКА
+    if await check_casino_spam(message.from_user.id, message.chat.id, bot):
+        return
+    
     args = message.text.split()
+    # ... остальной код без изменений ...
     if len(args) < 3:
         return await message.answer(" Формат: `/roulette [ставка] [красное/чёрное/зелёное/число]`")
     
@@ -997,7 +1051,12 @@ async def cmd_roulette(message: Message):
 # === ИГРА: БЛЭКДЖЕК ===
 @dp.message(Command("blackjack", "блэкджек"))
 async def cmd_blackjack_start(message: Message, state: FSMContext):
+    # 🔹 АНТИ-СПАМ ПРОВЕРКА
+    if await check_casino_spam(message.from_user.id, message.chat.id, bot):
+        return
+    
     args = message.text.split()
+    # ... остальной код без изменений ...
     if len(args) < 2: return await message.answer("🃏 Формат: `/blackjack [ставка]`")
     try:
         bet = int(args[1])
@@ -1095,10 +1154,20 @@ async def process_blackjack(cb: CallbackQuery, state: FSMContext):
         await cb.answer()
 # === ИГРА: КРЭШ ===
 active_crash_games = {}
+# === АНТИ-СПАМ КАЗИНО ===
+casino_command_times = {}  # {user_id: [timestamp1, timestamp2, ...]}
+CASINO_SPAM_LIMIT = 3       # макс команд
+CASINO_SPAM_WINDOW = 60     # секунд (1 минута)
+CASINO_MUTE_DURATION = 1800 # секунд (30 минут)
 
 @dp.message(Command("crash", "крэш"))
 async def cmd_crash(message: Message):
+    # 🔹 АНТИ-СПАМ ПРОВЕРКА
+    if await check_casino_spam(message.from_user.id, message.chat.id, bot):
+        return
+    
     args = message.text.split()
+    # ... остальной код без изменений ...
     if len(args) < 2: return await message.answer("📈 Формат: `/crash [ставка]`")
     try:
         bet = int(args[1])
@@ -1262,7 +1331,12 @@ def get_mines_multiplier(mines_count: int, opened: int):
 
 @dp.message(Command("mines", "сапёр"))
 async def cmd_mines_start(message: Message, state: FSMContext):
+    # 🔹 АНТИ-СПАМ ПРОВЕРКА
+    if await check_casino_spam(message.from_user.id, message.chat.id, bot):
+        return
+    
     args = message.text.split()
+    # ... остальной код без изменений ...
     if len(args) < 3:
         return await message.answer("💣 Формат: `/mines [ставка] [кол-во мин 1-24]`\nПример: `/mines 100 5`")
     
