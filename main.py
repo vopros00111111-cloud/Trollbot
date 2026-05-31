@@ -11,6 +11,7 @@ import threading
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 import random
+import math
 
 app = Flask(__name__)
 
@@ -880,6 +881,9 @@ async def finish_quiz_task(quiz_id, delay):
 # === СОСТОЯНИЯ ДЛЯ БЛЭКДЖЕКА ===
 class BlackjackStates(StatesGroup):
     playing = State()
+# === СОСТОЯНИЯ ДЛЯ САПЁРА ===
+class MinesStates(StatesGroup):
+    playing = State()
 # === ИГРА: СЛОТЫ ===
 @dp.message(Command("slots", "слоты"))
 async def cmd_slots(message: Message):
@@ -1171,6 +1175,249 @@ async def crash_cashout(cb: CallbackQuery):
         parse_mode="Markdown"
     )
     await cb.answer(f"Вы забрали {win_amount}!")
+# === СОЦИАЛКА: ТОП И ПРОФИЛЬ ===
+@dp.message(Command("top", "топ"))
+async def cmd_top(message: Message):
+    async with pool.acquire() as conn:
+        rows = await conn.fetch('SELECT username, balance FROM users WHERE balance > 0 ORDER BY balance DESC LIMIT 10')
+    
+    if not rows:
+        return await message.answer("🏆 Топ пока пуст. Стань первым!")
+    
+    text = "🏆 **ТОП-10 ИГРОКОВ**\n\n"
+    medals = ["🥇", "🥈", "🥉"]
+    for i, row in enumerate(rows):
+        prefix = medals[i] if i < 3 else f"{i+1}."
+        text += f"{prefix} @{row['username']} — **{row['balance']}** 💰\n"
+    
+    await message.answer(text, parse_mode="Markdown")
+@dp.message(Command("profile", "профиль"))
+async def cmd_profile(message: Message):
+    args = message.text.split()
+    
+    if len(args) > 1:
+        username = args[1].replace("@", "")
+        async with pool.acquire() as conn:
+            row = await conn.fetchrow('SELECT user_id, username, balance, is_admin FROM users WHERE username = $1', username)
+        if not row:
+            return await message.answer(f"❌ Пользователь @{username} не найден")
+        target_id = row['user_id']
+        target_name = row['username']
+        balance = row['balance']
+        is_admin = row['is_admin']
+    else:
+        target_id = message.from_user.id
+        data = await get_user_data(target_id)
+        if not data:
+            return await message.answer("❌ Профиль не найден. Напиши /start")
+        target_name = data['username']
+        balance = data['balance']
+        is_admin = data['is_admin']
+    
+    # 🔹 Считаем место в топе
+    async with pool.acquire() as conn:
+        rank = await conn.fetchval(
+            "SELECT COUNT(*) + 1 FROM users WHERE balance > (SELECT balance FROM users WHERE user_id = $1)",
+            target_id
+        )
+        total_wins = await conn.fetchval("SELECT COALESCE(SUM(amount), 0) FROM transactions WHERE receiver_id = $1 AND type LIKE '%_win'", target_id) or 0
+        total_games = await conn.fetchval("SELECT COUNT(*) FROM transactions WHERE sender_id = $1 OR receiver_id = $1", target_id) or 0
+    
+    status = "👑 Админ" if is_admin == 1 else "🎮 Игрок"
+    
+    text = (
+        f"👤 **ПРОФИЛЬ** @{target_name}\n\n"
+        f"🏅 Место в топе: **#{rank}**\n"
+        f"💰 Баланс: **{balance}**\n"
+        f"🏆 Всего выиграно: **{total_wins}**\n"
+        f"🎲 Активность: **{total_games}** операций\n"
+        f"⭐ Статус: {status}"
+    )
+    await message.answer(text, parse_mode="Markdown")
+# === ИГРА: САПЁР (MINES) ===
+class MinesStates(StatesGroup):
+    playing = State()
+
+# Множители для сапёра (зависят от кол-ва мин и открытых клеток)
+def get_mines_multiplier(mines_count: int, opened: int):
+    """Рассчитывает множитель на основе вероятности"""
+    if opened == 0:
+        return 1.0
+    total_cells = 25
+    safe_cells = total_cells - mines_count
+    multiplier = 1.0
+    for i in range(opened):
+        probability = (safe_cells - i) / (total_cells - i)
+        multiplier *= (1 / probability)
+    # Добавляем маржу казино 3%
+    return round(multiplier * 0.97, 2)
+
+
+@dp.message(Command("mines", "сапёр"))
+async def cmd_mines_start(message: Message, state: FSMContext):
+    args = message.text.split()
+    if len(args) < 3:
+        return await message.answer("💣 Формат: `/mines [ставка] [кол-во мин 1-24]`\nПример: `/mines 100 5`")
+    
+    try:
+        bet = int(args[1])
+        mines_count = int(args[2])
+        if bet < 10: return await message.answer("❌ Мин. ставка 10")
+        if not (1 <= mines_count <= 24): return await message.answer("❌ Мины: от 1 до 24")
+    except ValueError:
+        return await message.answer("❌ Неверный формат")
+    
+    user_id = message.from_user.id
+    ok, _ = await deduct_balance(user_id, bet)
+    if not ok:
+        return await message.answer("❌ Недостаточно монет!")
+    
+    # Генерируем поле: 0 = безопасно, 1 = мина
+    field = [0] * 25
+    mine_positions = random.sample(range(25), mines_count)
+    for pos in mine_positions:
+        field[pos] = 1
+    
+    await state.set_data({
+        "bet": bet,
+        "mines_count": mines_count,
+        "field": field,
+        "opened": [],
+        "status": "playing"    })
+    await state.set_state(MinesStates.playing)
+    
+    # Строим клавиатуру 5x5
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="⬜", callback_data=f"mine_{i}") for i in range(row*5, row*5+5)]
+        for row in range(5)
+    ])
+    
+    current_mult = get_mines_multiplier(mines_count, 0)
+    text = (
+        f"💣 **САПЁР** (Ставка: {bet})\n"
+        f"Мин на поле: **{mines_count}**\n"
+        f"Текущий множитель: **x{current_mult}**\n\n"
+        f"Нажимай на клетки! Найди алмаз 💎 или мину 💣"
+    )
+    await message.answer(text, reply_markup=kb, parse_mode="Markdown")
+
+
+@dp.callback_query(MinesStates.playing, F.data.startswith("mine_"))
+async def process_mines(cb: CallbackQuery, state: FSMContext):
+    user_id = cb.from_user.id
+    cell_index = int(cb.data.split("_")[1])
+    
+    data = await state.get_data()
+    if data["status"] != "playing":
+        return await cb.answer("Игра завершена!", show_alert=True)
+    
+    if cell_index in data["opened"]:
+        return await cb.answer("Эта клетка уже открыта!")
+    
+    field = data["field"]
+    bet = data["bet"]
+    mines_count = data["mines_count"]
+    opened = data["opened"] + [cell_index]
+    
+    # Проверка: мина или алмаз?
+    if field[cell_index] == 1:
+        # БОМБА!
+        await log_loss(user_id, bet, "mines")
+        
+        # Показываем всё поле
+        reveal_text = ""
+        for i in range(25):
+            if field[i] == 1:
+                reveal_text += "💣"
+            elif i in opened:
+                reveal_text += "💎"
+            else:
+                reveal_text += "⬜"            if (i + 1) % 5 == 0:
+                reveal_text += "\n"
+        
+        text = (
+            f"💥 **БОМБА!**\n\n{reveal_text}\n"
+            f"Ты проиграл **{bet}** монет."
+        )
+        await cb.message.edit_text(text, parse_mode="Markdown")
+        await state.clear()
+        await cb.answer("💣 Бум!")
+    else:
+        # АЛМАЗ! Продолжаем
+        current_mult = get_mines_multiplier(mines_count, len(opened))
+        potential_win = int(bet * current_mult)
+        
+        await state.update_data(opened=opened)
+        
+        # Обновляем клавиатуру: открытые клетки меняются на 💎
+        kb_rows = []
+        for row in range(5):
+            row_btns = []
+            for col in range(5):
+                idx = row * 5 + col
+                if idx in opened:
+                    row_btns.append(InlineKeyboardButton(text="💎", callback_data=f"mine_{idx}"))
+                else:
+                    row_btns.append(InlineKeyboardButton(text="⬜", callback_data=f"mine_{idx}"))
+            kb_rows.append(row_btns)
+        
+        # Добавляем кнопку "Забрать"
+        kb_rows.append([InlineKeyboardButton(
+            text=f"💰 ЗАБРАТЬ {potential_win}", 
+            callback_data="mine_cashout"
+        )])
+        
+        kb = InlineKeyboardMarkup(inline_keyboard=kb_rows)
+        
+        text = (
+            f"💣 **САПЁР** (Ставка: {bet})\n"
+            f"Мин на поле: **{mines_count}**\n"
+            f"Открыто: **{len(opened)}** | Множитель: **x{current_mult}**\n"
+            f"Потенциальный выигрыш: **{potential_win}**\n\n"
+            f"Продолжить или забрать?"
+        )
+        await cb.message.edit_text(text, reply_markup=kb, parse_mode="Markdown")
+        await cb.answer(f"💎 x{current_mult}")
+
+
+@dp.callback_query(MinesStates.playing, F.data == "mine_cashout")
+async def mines_cashout(cb: CallbackQuery, state: FSMContext):    user_id = cb.from_user.id
+    data = await state.get_data()
+    
+    if data["status"] != "playing":
+        return await cb.answer("Игра завершена!", show_alert=True)
+    
+    bet = data["bet"]
+    mines_count = data["mines_count"]
+    opened = data["opened"]
+    current_mult = get_mines_multiplier(mines_count, len(opened))
+    win_amount = int(bet * current_mult)
+    
+    final_bal = await add_winnings(user_id, win_amount, bet, "mines")
+    
+    # Показываем где были мины
+    field = data["field"]
+    reveal_text = ""
+    for i in range(25):
+        if field[i] == 1:
+            reveal_text += "💣"
+        elif i in opened:
+            reveal_text += "💎"
+        else:
+            reveal_text += "⬛"
+        if (i + 1) % 5 == 0:
+            reveal_text += "\n"
+    
+    text = (
+        f"💰 **ТЫ ЗАБРАЛ!**\n\n{reveal_text}\n"
+        f"Множитель: **x{current_mult}**\n"
+        f"Выигрыш: **+{win_amount}**\n"
+        f"Баланс: **{final_bal}**"
+    )
+    await cb.message.edit_text(text, parse_mode="Markdown")
+    await state.clear()
+    await cb.answer(f"Забрал {win_amount}!")
+
 async def main():
     await init_db()
     logger.info("🤖 Запущен с PostgreSQL")
