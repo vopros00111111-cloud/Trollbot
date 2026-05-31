@@ -1332,7 +1332,8 @@ async def process_mines(cb: CallbackQuery, state: FSMContext):
             elif i in opened:
                 reveal_text += "💎"
             else:
-                reveal_text += "⬜"            if (i + 1) % 5 == 0:
+                reveal_text += "⬜"
+                if (i + 1) % 5 == 0:
                 reveal_text += "\n"
         
         text = (
