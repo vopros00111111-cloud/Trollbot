@@ -1335,9 +1335,14 @@ async def _poker_wait_timer(msg_id: int):
 async def poker_join(cb: CallbackQuery):
     msg_id = int(cb.data.split("_")[2])
     user_id = cb.from_user.id
-
-    if msg_id not in active_poker_games:
+if msg_id not in active_poker_games:
         return await cb.answer("❌ Игра уже началась или отменена!", show_alert=True)
+
+    game = active_poker_games[msg_id]
+    
+    # 🔹 ДОБАВЬ ЭТУ ПРОВЕРКУ:
+    if game.get("status") == "started":
+        return await cb.answer("❌ Игра уже началась!", show_alert=True)
 
     game = active_poker_games[msg_id]
 
@@ -1442,9 +1447,10 @@ async def _start_poker_game(game: dict):
             )
         except Exception:
             pass
-    active_poker_games.pop(msg_id, None)
+    # 🔹 НЕ удаляем! Помечаем как начавшуюся
+    game["status"] = "started"
     
-    # 🔹 ДОБАВЬ ЭТУ СТРОКУ:
+    # Раздача карт
     await _deal_poker_cards(game)
     # TODO: Здесь будет логика раздачи карт (Часть 2)
 # === ПОКЕР: КОЛОДА И ОЦЕНКА РУК ===
