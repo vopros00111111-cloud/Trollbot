@@ -1421,7 +1421,6 @@ async def _start_poker_game(game: dict):
 
     # Раздаём карты
     await _deal_poker_cards(game)
-    await cb.answer(f"Вы в игре! ({current}/{max_p})")
     # 🔹 НЕ удаляем! Помечаем как начавшуюся
     game["status"] = "started"
     
@@ -1439,19 +1438,17 @@ def create_deck():
     return [{"rank": r, "suit": s, "value": RANK_VALUES[r]} for r in RANKS for s in SUITS]
 
 def evaluate_hand(hole_cards, community_cards):
-    """
-    Оценивает лучшую комбинацию из 7 карт (2 личные + 5 общих).
-    Возвращает (score, name), где score — числовой рейтинг для сравнения.
-    """
+    """Оценивает лучшую комбинацию из 7 карт."""
     all_cards = hole_cards + community_cards
-    best_score = (0, "Старшая карта")
-    
-    # Перебираем все комбинации по 5 карт из 7
+    # 🔹 Инициализируем правильно: ((ранг, кикеры...), название)
+    best_score = ((0,), "Старшая карта")
+
     for combo in itertools.combinations(all_cards, 5):
         score = _evaluate_5_cards(combo)
-        if score > best_score:
+        # score = ((rank, tiebreakers...), name)
+        if score[0] > best_score[0]:
             best_score = score
-    
+
     return best_score
 
 def _evaluate_5_cards(cards):
