@@ -1336,7 +1336,8 @@ async def poker_join(cb: CallbackQuery):
     msg_id = int(cb.data.split("_")[2])
     user_id = cb.from_user.id
     
-    if msg_id not in active_poker_games:        return await cb.answer("Игра уже началась или отменена!", show_alert=True)
+    if msg_id not in active_poker_games:
+        return await cb.answer("Игра уже началась или отменена!", show_alert=True)
     
     game = active_poker_games[msg_id]
     
@@ -1563,55 +1564,55 @@ async def _deal_poker_cards(game: dict):
 async def poker_call(cb: CallbackQuery):
     msg_id = int(cb.data.split("_")[2])
     user_id = cb.from_user.id
-    
-    # Ищем игру по msg_id (она могла переместиться в active_poker_games с другим ключом)
+
+    # 🔹 Улучшенный поиск игры
     game = None
     for g in active_poker_games.values():
-        if g.get("msg_id") == msg_id and user_id in g.get("active_players", []):
+        if g.get("msg_id") == msg_id:
             game = g
             break
-    
-    if not game:
-        return await cb.answer("Игра не найдена или вы выбыли!", show_alert=True)
-    
+
+    if not game or user_id not in game.get("active_players", []):
+        return await cb.answer("❌ Игра не найдена или вы уже выбыли!", show_alert=True)
+
+    if game.get("stage") not in ("preflop", "flop", "turn", "river"):
+        return await cb.answer("⏳ Игра ещё не началась или уже завершена!", show_alert=True)
+
     stage = game["stage"]
     bet = game["bet"]
-    
-    # Определяем ставку на текущем этапе
-    if stage == "preflop":
+
+    # Ставка на текущем этапе
+    if stage in ("preflop", "flop"):
         stage_bet = bet
-    elif stage == "flop":
-        stage_bet = bet
-    elif stage == "turn":
+    else:  # turn, river
         stage_bet = bet * 2
-    elif stage == "river":
-        stage_bet = bet * 2
-    else:
-        return await cb.answer("Игра завершена!", show_alert=True)
-    
-    # Списываем ставку за этап
+
+    # Списываем ставку
     ok, _ = await deduct_balance(user_id, stage_bet)
     if not ok:
-        # Если нет денег — автоматический фолд
         game["active_players"].remove(user_id)
-        await cb.message.edit_text("❌ Недостаточно монет! Вы автоматически сбросили карты.")
+        try:
+            await cb.message.edit_text("❌ Недостаточно монет! Авто-фолд.")
+        except Exception:
+            pass
         await _check_poker_stage_end(game)
         return
-    
+
     game["pot"] += stage_bet
-    
-    # Отмечаем что игрок ответил
+
     if "responses" not in game:
         game["responses"] = set()
     game["responses"].add(user_id)
-    
-    await cb.message.edit_text(
-        f"✅ Вы уравняли ставку ({stage_bet})\n"
-        f"💰 Банк: {game['pot']}\n\n"        f"⏳ Ожидание других игроков...",
-        parse_mode="Markdown"
-    )
-    await cb.answer("Колл принят!")
-    
+
+    try:
+        await cb.message.edit_text(
+            f"✅ Вы уравняли ({stage_bet})\n💰 Банк: {game['pot']}\n\n⏳ Ждём других...",
+            parse_mode="Markdown"
+        )
+    except Exception:
+        pass
+    await cb.answer("Колл!")
+
     await _check_poker_stage_end(game)
 
 
@@ -1619,24 +1620,28 @@ async def poker_call(cb: CallbackQuery):
 async def poker_fold(cb: CallbackQuery):
     msg_id = int(cb.data.split("_")[2])
     user_id = cb.from_user.id
-    
+
+    # 🔹 Улучшенный поиск игры
     game = None
     for g in active_poker_games.values():
-        if g.get("msg_id") == msg_id and user_id in g.get("active_players", []):
+        if g.get("msg_id") == msg_id:
             game = g
             break
-    
-    if not game:
-        return await cb.answer("Игра не найдена!", show_alert=True)
-    
+
+    if not game or user_id not in game.get("active_players", []):
+        return await cb.answer("❌ Игра не найдена или вы уже выбыли!", show_alert=True)
+
     game["active_players"].remove(user_id)
     if "responses" not in game:
         game["responses"] = set()
     game["responses"].add(user_id)
-    
-    await cb.message.edit_text("❌ Вы сбросили карты. Игра окончена для вас.", parse_mode="Markdown")
+
+    try:
+        await cb.message.edit_text("❌ Вы сбросили карты.", parse_mode="Markdown")
+    except Exception:
+        pass
     await cb.answer("Фолд!")
-    
+
     await _check_poker_stage_end(game)
 
 
