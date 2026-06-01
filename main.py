@@ -1335,12 +1335,11 @@ async def _poker_wait_timer(msg_id: int):
 async def poker_join(cb: CallbackQuery):
     msg_id = int(cb.data.split("_")[2])
     user_id = cb.from_user.id
-    if msg_id not in active_poker_games:
-        return await cb.answer("❌ Игра уже началась или отменена!", show_alert=True)
-
-    game = active_poker_games[msg_id]
-    
-    # 🔹 ДОБАВЬ ЭТУ ПРОВЕРКУ:
+    # 🔹 ОТЛАДКА (удали потом!)
+    print(f"[POKER JOIN] msg_id={msg_id}, user={user_id}")
+    print(f"[POKER JOIN] active_games keys: {list(active_poker_games.keys())}")
+    for k, v in active_poker_games.items():
+        print(f"  key={k}, stored_msg_id={v.get('msg_id')}, status={v.get('status')}")
     if game.get("status") == "started":
         return await cb.answer("❌ Игра уже началась!", show_alert=True)
 
