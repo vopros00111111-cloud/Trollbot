@@ -1228,7 +1228,533 @@ async def cmd_profile(message: Message):
 # === ИГРА: САПЁР (MINES) ===
 class MinesStates(StatesGroup):
     playing = State()
+class PokerStates(StatesGroup):
+    waiting_for_opponents = State()
+    preflop = State()
+    flop = State()
+    turn = State()
+    river = State()
+# === ПОКЕР: ВЫЗОВ И ПОИСК СОПЕРНИКОВ ===
+active_poker_games = {}  # {message_id: {"host": user_id, "bet": int, "players": [], "max_players": int, "expires_at": float}}
 
+@dp.message(Command("poker", "покер"))
+async def cmd_poker_challenge(message: Message):
+    args = message.text.split()
+    if len(args) < 2:
+        return await message.answer("🃏 Формат: `/poker [ставка] [кол-во игроков 2-4]`\nПример: `/poker 500 3`")
+    
+    try:
+        bet = int(args[1])
+        max_players = int(args[2]) if len(args) > 2 else 2
+        if bet < 50: return await message.answer("❌ Мин. ставка 50")
+        if not (2 <= max_players <= 4): return await message.answer("❌ Игроков: от 2 до 4")
+    except ValueError:
+        return await message.answer("❌ Неверный формат")
+    
+    user_id = message.from_user.id
+    
+    # Проверяем баланс хоста (не списываем пока!)
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow('SELECT balance FROM users WHERE user_id = $1', user_id)
+        if not row or row['balance'] < bet:
+            return await message.answer("❌ Недостаточно монет!")
+    
+    # Проверяем доступ к ЛС хоста
+    try:
+        await bot.send_message(user_id, "🃏 Проверка доступа... Если видите это — всё ок!")
+    except Exception:
+        return await message.answer(
+            f"❌ @{message.from_user.username}, вы заблокировали бота!\n"
+            f"Напишите /start в ЛС бота и попробуйте снова.",
+            parse_mode="Markdown"
+        )
+    
+    expires_at = time.time() + 60  # 1 минута на сбор
+    
+    btns = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="✅ Принять вызов", callback_data=f"poker_join_{message.message_id}")]
+    ])
+    
+    msg = await message.answer(
+        f"🃏 **ПОКЕР**\n\n"
+        f"👤 @{message.from_user.username} ищет соперников!\n"
+        f"💰 Ставка: **{bet}** монет\n"
+        f"👥 Игроков: **1/{max_players}**\n"
+        f"⏳ Ожидание: **60 сек**\n\n"
+        f"Нажмите кнопку, чтобы присоединиться!",
+        reply_markup=btns,
+        parse_mode="Markdown"    )
+    
+    active_poker_games[msg.message_id] = {
+        "host": user_id,
+        "host_name": message.from_user.username,
+        "bet": bet,
+        "max_players": max_players,
+        "players": [{"user_id": user_id, "username": message.from_user.username}],
+        "chat_id": message.chat.id,
+        "expires_at": expires_at,
+        "msg_id": msg.message_id
+    }
+    
+    # Запускаем таймер ожидания
+    asyncio.create_task(_poker_wait_timer(msg.message_id))
+
+
+async def _poker_wait_timer(msg_id: int):
+    """Ждёт 60 секунд, затем либо начинает игру, либо отменяет"""
+    await asyncio.sleep(60)
+    
+    if msg_id not in active_poker_games:
+        return  # Игра уже началась или отменена
+    
+    game = active_poker_games[msg_id]
+    players = game["players"]
+    
+    if len(players) >= 2:
+        # Начинаем игру с теми кто есть
+        await _start_poker_game(game)
+    else:
+        # Никто не пришёл
+        try:
+            await bot.edit_message_text(
+                chat_id=game["chat_id"],
+                message_id=msg_id,
+                text="🃏 **ПОКЕР ОТМЕНЁН**\n\nНикто не принял вызов за 60 секунд.",
+                parse_mode="Markdown"
+            )
+        except Exception:
+            pass
+        active_poker_games.pop(msg_id, None)
+
+
+@dp.callback_query(F.data.startswith("poker_join_"))
+async def poker_join(cb: CallbackQuery):
+    msg_id = int(cb.data.split("_")[2])
+    user_id = cb.from_user.id
+    
+    if msg_id not in active_poker_games:        return await cb.answer("Игра уже началась или отменена!", show_alert=True)
+    
+    game = active_poker_games[msg_id]
+    
+    # Нельзя присоединиться к своей игре
+    if user_id == game["host"]:
+        return await cb.answer("Вы уже в игре!", show_alert=True)
+    
+    # Проверка дубликата
+    if any(p["user_id"] == user_id for p in game["players"]):
+        return await cb.answer("Вы уже присоединились!", show_alert=True)
+    
+    # Проверка баланса
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow('SELECT balance FROM users WHERE user_id = $1', user_id)
+        if not row or row['balance'] < game["bet"]:
+            return await cb.answer("❌ Недостаточно монет!", show_alert=True)
+    
+    # Проверка доступа к ЛС
+    try:
+        await bot.send_message(user_id, "🃏 Проверка доступа... Если видите это — всё ок!")
+    except Exception:
+        return await cb.answer(
+            "❌ Вы заблокировали бота! Напишите /start в ЛС и нажмите кнопку снова.",
+            show_alert=True
+        )
+    
+    # Добавляем игрока
+    game["players"].append({"user_id": user_id, "username": cb.from_user.username})
+    current = len(game["players"])
+    max_p = game["max_players"]
+    
+    # Обновляем сообщение
+    btns = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="✅ Принять вызов", callback_data=f"poker_join_{msg_id}")]
+    ])
+    
+    try:
+        await cb.message.edit_text(
+            f"🃏 **ПОКЕР**\n\n"
+            f"👤 @{game['host_name']} ищет соперников!\n"
+            f"💰 Ставка: **{game['bet']}** монет\n"
+            f"👥 Игроков: **{current}/{max_p}**\n"
+            f"⏳ Ожидание: **{int(game['expires_at'] - time.time())} сек**\n\n"
+            f"Нажмите кнопку, чтобы присоединиться!",
+            reply_markup=btns,
+            parse_mode="Markdown"
+        )
+    except Exception:
+        pass    
+    await cb.answer(f"Вы присоединились! ({current}/{max_p})")
+    
+    # Если набрали максимум — начинаем сразу
+    if current >= max_p:
+        await _start_poker_game(game)
+
+
+async def _start_poker_game(game: dict):
+    """Заглушка для старта игры. Будет реализована в Части 2."""
+    msg_id = game["msg_id"]
+    chat_id = game["chat_id"]
+    players = game["players"]
+    bet = game["bet"]
+    
+    # Списываем ставки у всех
+    for player in players:
+        await deduct_balance(player["user_id"], bet)
+    
+    # Редактируем исходное сообщение
+    player_names = ", ".join([f"@{p['username']}" for p in players])
+    try:
+        await bot.edit_message_text(
+            chat_id=chat_id,
+            message_id=msg_id,
+            text=(
+                f"🃏 **ПОКЕР НАЧАЛСЯ!**\n\n"
+                f"👥 Игроки: {player_names}\n"
+                f"💰 Банк: **{bet * len(players)}** монет\n\n"
+                f"📩 Карты разосланы в ЛС!"
+            ),
+            parse_mode="Markdown"
+        )
+    except Exception:
+        pass
+    
+    # Отправляем заглушку в ЛС каждому (временная)
+    for player in players:
+        try:
+            await bot.send_message(
+                player["user_id"],
+                f"🃏 **ПОКЕР НАЧАЛСЯ!**\n\n"
+                f"Ставка: {bet} | Игроков: {len(players)}\n"
+                f"⏳ Раздача карт скоро...",
+                parse_mode="Markdown"
+            )
+        except Exception:
+            pass
+    active_poker_games.pop(msg_id, None)
+    
+    # 🔹 ДОБАВЬ ЭТУ СТРОКУ:
+    await _deal_poker_cards(game)
+    # TODO: Здесь будет логика раздачи карт (Часть 2)
+# === ПОКЕР: КОЛОДА И ОЦЕНКА РУК ===
+import itertools
+
+SUITS = ["♠️", "♥️", "♦️", "♣️"]
+RANKS = ["2", "3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K", "A"]
+RANK_VALUES = {r: i for i, r in enumerate(RANKS, 2)}  # 2=2, ..., A=14
+
+def create_deck():
+    return [{"rank": r, "suit": s, "value": RANK_VALUES[r]} for r in RANKS for s in SUITS]
+
+def evaluate_hand(hole_cards, community_cards):
+    """
+    Оценивает лучшую комбинацию из 7 карт (2 личные + 5 общих).
+    Возвращает (score, name), где score — числовой рейтинг для сравнения.
+    """
+    all_cards = hole_cards + community_cards
+    best_score = (0, "Старшая карта")
+    
+    # Перебираем все комбинации по 5 карт из 7
+    for combo in itertools.combinations(all_cards, 5):
+        score = _evaluate_5_cards(combo)
+        if score > best_score:
+            best_score = score
+    
+    return best_score
+
+def _evaluate_5_cards(cards):
+    """Оценивает ровно 5 карт. Возвращает (score_tuple, name)"""
+    values = sorted([c["value"] for c in cards], reverse=True)
+    suits = [c["suit"] for c in cards]
+    is_flush = len(set(suits)) == 1
+    
+    # Проверка стрита
+    is_straight = False
+    straight_high = 0
+    unique_vals = sorted(set(values), reverse=True)
+    if len(unique_vals) == 5:
+        if unique_vals[0] - unique_vals[4] == 4:
+            is_straight = True
+            straight_high = unique_vals[0]
+        # Стрит A-2-3-4-5
+        elif unique_vals == [14, 5, 4, 3, 2]:
+            is_straight = True
+            straight_high = 5
+    
+    # Подсчёт совпадений
+    from collections import Counter
+    counts = Counter(values)
+    freq = sorted(counts.values(), reverse=True)
+        # Рейтинг комбинаций (от старшей к младшей)
+    if is_flush and is_straight:
+        return ((9, straight_high), "Стрит-флеш")
+    if freq == [4, 1]:
+        quad_val = [v for v, c in counts.items() if c == 4][0]
+        return ((8, quad_val), "Каре")
+    if freq == [3, 2]:
+        trip_val = [v for v, c in counts.items() if c == 3][0]
+        return ((7, trip_val), "Фулл-хаус")
+    if is_flush:
+        return ((6, *values), "Флеш")
+    if is_straight:
+        return ((5, straight_high), "Стрит")
+    if freq == [3, 1, 1]:
+        trip_val = [v for v, c in counts.items() if c == 3][0]
+        return ((4, trip_val), "Сет")
+    if freq == [2, 2, 1]:
+        pairs = sorted([v for v, c in counts.items() if c == 2], reverse=True)
+        return ((3, *pairs), "Две пары")
+    if freq == [2, 1, 1, 1]:
+        pair_val = [v for v, c in counts.items() if c == 2][0]
+        return ((2, pair_val), "Пара")
+    
+    return ((1, *values), "Старшая карта")
+
+
+async def _deal_poker_cards(game: dict):
+    """Раздаёт карты всем игрокам и отправляет в ЛС"""
+    deck = create_deck()
+    random.shuffle(deck)
+    
+    players = game["players"]
+    bet = game["bet"]
+    
+    # Раздача: 2 карты каждому
+    hands = {}
+    for p in players:
+        hands[p["user_id"]] = [deck.pop(), deck.pop()]
+    
+    # Общие карты (пока скрыты)
+    community = [deck.pop() for _ in range(5)]
+    
+    # Сохраняем состояние игры
+    game["hands"] = hands
+    game["community"] = community
+    game["stage"] = "preflop"
+    game["pot"] = bet * len(players)
+    game["active_players"] = [p["user_id"] for p in players]
+    
+    # Отправляем карты в ЛС    for p in players:
+        uid = p["user_id"]
+        h = hands[uid]
+        card_text = f"{h[0]['rank']}{h[0]['suit']}  {h[1]['rank']}{h[1]['suit']}"
+        
+        btns = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="📞 Колл", callback_data=f"poker_call_{game['msg_id']}"),
+             InlineKeyboardButton(text="❌ Фолд", callback_data=f"poker_fold_{game['msg_id']}")]
+        ])
+        
+        try:
+            await bot.send_message(
+                uid,
+                f"🃏 **ВАШИ КАРТЫ:**\n\n{card_text}\n\n"
+                f"💰 Банк: {game['pot']} | Ставка: {bet}\n"
+                f"📍 Этап: Префлоп",
+                reply_markup=btns,
+                parse_mode="Markdown"
+            )
+        except Exception:
+            pass  # Игрок заблокировал бота — пропускаем
+# === ПОКЕР: ХОДЫ И ФИНАЛ ===
+@dp.callback_query(F.data.startswith("poker_call_"))
+async def poker_call(cb: CallbackQuery):
+    msg_id = int(cb.data.split("_")[2])
+    user_id = cb.from_user.id
+    
+    # Ищем игру по msg_id (она могла переместиться в active_poker_games с другим ключом)
+    game = None
+    for g in active_poker_games.values():
+        if g.get("msg_id") == msg_id and user_id in g.get("active_players", []):
+            game = g
+            break
+    
+    if not game:
+        return await cb.answer("Игра не найдена или вы выбыли!", show_alert=True)
+    
+    stage = game["stage"]
+    bet = game["bet"]
+    
+    # Определяем ставку на текущем этапе
+    if stage == "preflop":
+        stage_bet = bet
+    elif stage == "flop":
+        stage_bet = bet
+    elif stage == "turn":
+        stage_bet = bet * 2
+    elif stage == "river":
+        stage_bet = bet * 2
+    else:
+        return await cb.answer("Игра завершена!", show_alert=True)
+    
+    # Списываем ставку за этап
+    ok, _ = await deduct_balance(user_id, stage_bet)
+    if not ok:
+        # Если нет денег — автоматический фолд
+        game["active_players"].remove(user_id)
+        await cb.message.edit_text("❌ Недостаточно монет! Вы автоматически сбросили карты.")
+        await _check_poker_stage_end(game)
+        return
+    
+    game["pot"] += stage_bet
+    
+    # Отмечаем что игрок ответил
+    if "responses" not in game:
+        game["responses"] = set()
+    game["responses"].add(user_id)
+    
+    await cb.message.edit_text(
+        f"✅ Вы уравняли ставку ({stage_bet})\n"
+        f"💰 Банк: {game['pot']}\n\n"        f"⏳ Ожидание других игроков...",
+        parse_mode="Markdown"
+    )
+    await cb.answer("Колл принят!")
+    
+    await _check_poker_stage_end(game)
+
+
+@dp.callback_query(F.data.startswith("poker_fold_"))
+async def poker_fold(cb: CallbackQuery):
+    msg_id = int(cb.data.split("_")[2])
+    user_id = cb.from_user.id
+    
+    game = None
+    for g in active_poker_games.values():
+        if g.get("msg_id") == msg_id and user_id in g.get("active_players", []):
+            game = g
+            break
+    
+    if not game:
+        return await cb.answer("Игра не найдена!", show_alert=True)
+    
+    game["active_players"].remove(user_id)
+    if "responses" not in game:
+        game["responses"] = set()
+    game["responses"].add(user_id)
+    
+    await cb.message.edit_text("❌ Вы сбросили карты. Игра окончена для вас.", parse_mode="Markdown")
+    await cb.answer("Фолд!")
+    
+    await _check_poker_stage_end(game)
+
+
+async def _check_poker_stage_end(game: dict):
+    """Проверяет, все ли ответили, и переходит к следующему этапу"""
+    active = game["active_players"]
+    responses = game.get("responses", set())
+    
+    # Если остался 1 игрок — он победил
+    if len(active) <= 1:
+        await _poker_finish(game)
+        return
+    
+    # Ждём пока все активные ответят
+    if not all(uid in responses for uid in active):
+        return
+    
+    # Все ответили — переходим к следующему этапу
+    game["responses"] = set()
+    stage = game["stage"]    community = game["community"]
+    
+    if stage == "preflop":
+        game["stage"] = "flop"
+        reveal = f"{community[0]['rank']}{community[0]['suit']}  {community[1]['rank']}{community[1]['suit']}  {community[2]['rank']}{community[2]['suit']}"
+        next_text = "📍 Флоп"
+    elif stage == "flop":
+        game["stage"] = "turn"
+        reveal = f"{community[3]['rank']}{community[3]['suit']}"
+        next_text = "📍 Терн"
+    elif stage == "turn":
+        game["stage"] = "river"
+        reveal = f"{community[4]['rank']}{community[4]['suit']}"
+        next_text = "📍 Ривер"
+    elif stage == "river":
+        await _poker_finish(game)
+        return
+    
+    # Отправляем новые карты всем активным
+    btns = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="📞 Колл", callback_data=f"poker_call_{game['msg_id']}"),
+         InlineKeyboardButton(text="❌ Фолд", callback_data=f"poker_fold_{game['msg_id']}")]
+    ])
+    
+    for uid in active:
+        h = game["hands"][uid]
+        hole_text = f"{h[0]['rank']}{h[0]['suit']}  {h[1]['rank']}{h[1]['suit']}"
+        
+        try:
+            await bot.send_message(
+                uid,
+                f"🃏 **{next_text}**\n\n"
+                f"Ваши карты: {hole_text}\n"
+                f"Стол: {reveal}\n"
+                f"💰 Банк: {game['pot']}\n\n"
+                f"Выбирайте действие:",
+                reply_markup=btns,
+                parse_mode="Markdown"
+            )
+        except Exception:
+            pass
+
+
+async def _poker_finish(game: dict):
+    """Определяет победителя и раздаёт банк"""
+    active = game["active_players"]
+    pot = game["pot"]
+    community = game["community"]
+    hands = game["hands"]
+    chat_id = game["chat_id"]    msg_id = game["msg_id"]
+    
+    if len(active) == 1:
+        # Все остальные сбросили — последний выигрывает
+        winner_id = active[0]
+        winner_name = next(p["username"] for p in game["players"] if p["user_id"] == winner_id)
+        win_text = f"🏆 @{winner_name} забрал банк **{pot}** (все остальные сбросили)!"
+    else:
+        # Шоудаун — оцениваем руки
+        results = []
+        for uid in active:
+            score, name = evaluate_hand(hands[uid], community)
+            username = next(p["username"] for p in game["players"] if p["user_id"] == uid)
+            results.append((score, uid, username, name))
+        
+        results.sort(key=lambda x: x[0], reverse=True)
+        best_score = results[0][0]
+        winners = [r for r in results if r[0] == best_score]
+        
+        share = pot // len(winners)
+        winner_names = ", ".join([f"@{w[2]}" for w in winners])
+        combo_name = winners[0][3]
+        win_text = f"🏆 {winner_names} выиграли **{pot}** с комбинацией **{combo_name}**!"
+        
+        # Начисляем выигрыш
+        for w in winners:
+            await add_winnings(w[1], share, share, "poker")
+    
+    # Показываем общие карты
+    comm_text = " ".join([f"{c['rank']}{c['suit']}" for c in community])
+    
+    # Редактируем сообщение в чате
+    try:
+        await bot.edit_message_text(
+            chat_id=chat_id,
+            message_id=msg_id,
+            text=f"🃏 **ПОКЕР ЗАВЕРШЁН!**\n\n"
+                 f"🎴 Стол: {comm_text}\n\n"
+                 f"{win_text}",
+            parse_mode="Markdown"
+        )
+    except Exception:
+        pass
+    
+    # Уведомляем всех участников в ЛС
+    for p in game["players"]:
+        try:
+            await bot.send_message(p["user_id"], f"🃏 Игра окончена!\n{win_text}", parse_mode="Markdown")
+        except Exception:
+            pass    
+    # Удаляем игру
+    for key in list(active_poker_games.keys()):
+        if active_poker_games[key].get("msg_id") == msg_id:
+            del active_poker_games[key]
+            break
 
 async def main():
     await init_db()
