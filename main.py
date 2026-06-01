@@ -1656,7 +1656,8 @@ async def _check_poker_stage_end(game: dict):
     
     # Все ответили — переходим к следующему этапу
     game["responses"] = set()
-    stage = game["stage"]    community = game["community"]
+    stage = game["stage"]
+    community = game["community"]
     
     if stage == "preflop":
         game["stage"] = "flop"
@@ -1705,7 +1706,8 @@ async def _poker_finish(game: dict):
     pot = game["pot"]
     community = game["community"]
     hands = game["hands"]
-    chat_id = game["chat_id"]    msg_id = game["msg_id"]
+    chat_id = game["chat_id"]
+    msg_id = game["msg_id"]
     
     if len(active) == 1:
         # Все остальные сбросили — последний выигрывает
