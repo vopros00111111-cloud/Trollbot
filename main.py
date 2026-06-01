@@ -1335,63 +1335,65 @@ async def _poker_wait_timer(msg_id: int):
 async def poker_join(cb: CallbackQuery):
     msg_id = int(cb.data.split("_")[2])
     user_id = cb.from_user.id
-    # 🔹 ОТЛАДКА (удали потом!)
-    print(f"[POKER JOIN] msg_id={msg_id}, user={user_id}")
-    print(f"[POKER JOIN] active_games keys: {list(active_poker_games.keys())}")
-    for k, v in active_poker_games.items():
-        print(f"  key={k}, stored_msg_id={v.get('msg_id')}, status={v.get('status')}")
-    if game.get("status") == "started":
-        return await cb.answer("❌ Игра уже началась!", show_alert=True)
+
+    # 1. Проверяем, существует ли игра вообще
+    if msg_id not in active_poker_games:
+        return await cb.answer("❌ Игра уже началась или отменена!", show_alert=True)
 
     game = active_poker_games[msg_id]
 
-    # Нельзя присоединиться к своей игре
+    # 2. Проверяем, не началась ли она уже (флаг status)
+    if game.get("status") == "started":
+        return await cb.answer("❌ Игра уже началась! Карты разосланы.", show_alert=True)
+
+    # 3. Проверки игрока
     if user_id == game["host"]:
-        return await cb.answer("Вы уже в игре!", show_alert=True)
+        return await cb.answer("Вы уже создатель этой игры!", show_alert=True)
 
-    # Проверка дубликата
     if any(p["user_id"] == user_id for p in game["players"]):
-        return await cb.answer("Вы уже присоединились!", show_alert=True)
+        return await cb.answer("Вы уже присоединились к этой игре!", show_alert=True)
 
-    # Проверка баланса
+    # 4. Проверка баланса
     async with pool.acquire() as conn:
         row = await conn.fetchrow('SELECT balance FROM users WHERE user_id = $1', user_id)
         if not row or row['balance'] < game["bet"]:
-            return await cb.answer("❌ Недостаточно монет!", show_alert=True)
+            return await cb.answer("❌ Недостаточно монет для участия!", show_alert=True)
 
-    # Проверка доступа к ЛС
+    # 5. Проверка доступа к ЛС (критично для покера)
     try:
-        await bot.send_message(user_id, "🃏 Проверка доступа...")
+        await bot.send_message(user_id, "🃏 Вы успешно присоединились к столу!")
     except Exception:
         return await cb.answer(
-            "❌ Вы заблокировали бота! Напишите /start в ЛС.",
+            "❌ Вы заблокировали бота! Напишите /start в ЛС бота и нажмите кнопку снова.",
             show_alert=True
         )
 
-    # Добавляем игрока
+    # 6. Добавляем игрока
     game["players"].append({"user_id": user_id, "username": cb.from_user.username})
-    current = len(game["players"])
-    max_p = game["max_players"]
+    current_count = len(game["players"])
+    max_players = game["max_players"]
 
-    # 🔹 Если набрали максимум — начинаем СРАЗУ и выходим
-    if current >= max_p:
-        await cb.answer(f"Игра начинается! ({current}/{max_p})")
+    # 7. Если набрали максимум — запускаем игру СРАЗУ
+    if current_count >= max_players:
+        await cb.answer(f"🎉 Стол заполнен! Игра начинается...")
+        # Важно: передаём сам объект game, который всё ещё лежит в словаре
         await _start_poker_game(game)
-        return  # ← ВАЖНО: выходим, не обновляя кнопку
+        return  # Выходим, чтобы не пытаться редактировать сообщение ниже
 
-    # Иначе обновляем сообщение
+    # 8. Иначе обновляем сообщение в чате
     btns = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="✅ Принять вызов", callback_data=f"poker_join_{msg_id}")]
     ])
 
-    remaining = max(0, int(game["expires_at"] - time.time()))
+    remaining_time = max(0, int(game["expires_at"] - time.time()))
+    
     try:
         await cb.message.edit_text(
             f"🃏 **ПОКЕР**\n\n"
             f"👤 @{game['host_name']} ищет соперников!\n"
             f"💰 Ставка: **{game['bet']}** монет\n"
-            f"👥 Игроков: **{current}/{max_p}**\n"
-            f"⏳ Ожидание: **{remaining} сек**\n\n"
+            f"👥 Игроков: **{current_count}/{max_players}**\n"
+            f"⏳ Ожидание: **{remaining_time} сек**\n\n"
             f"Нажмите кнопку, чтобы присоединиться!",
             reply_markup=btns,
             parse_mode="Markdown"
@@ -1399,11 +1401,7 @@ async def poker_join(cb: CallbackQuery):
     except Exception:
         pass
 
-    await cb.answer(f"Вы присоединились! ({current}/{max_p})")
-    
-    # Если набрали максимум — начинаем сразу
-    if current >= max_p:
-        await _start_poker_game(game)
+    await cb.answer(f"Вы в игре! ({current_count}/{max_players})")
 
 
 async def _start_poker_game(game: dict):
