@@ -1631,55 +1631,63 @@ async def poker_fold(cb: CallbackQuery):
 
 async def _check_poker_stage_end(game: dict):
     """Проверяет, все ли ответили, и переходит к следующему этапу"""
-    active = game["active_players"]
+    active = game.get("active_players", [])
     responses = game.get("responses", set())
-    
-    # Если остался 1 игрок — он победил
+
+    # Если остался 1 игрок или меньше — он победил
     if len(active) <= 1:
         await _poker_finish(game)
         return
-    
-    # Ждём пока все активные ответят
+
+    # Проверяем, все ли активные игроки ответили
     if not all(uid in responses for uid in active):
-        return
-    
-    # Все ответили — переходим к следующему этапу
+        return  # Ждём остальных
+
+    # Все ответили — сбрасываем ответы и переходим дальше
     game["responses"] = set()
-    stage = game["stage"]
-    community = game["community"]
-    
+    stage = game.get("stage", "preflop")
+    community = game.get("community", [])
+
+    # Определяем следующий этап
     if stage == "preflop":
         game["stage"] = "flop"
-        reveal = f"{community[0]['rank']}{community[0]['suit']}  {community[1]['rank']}{community[1]['suit']}  {community[2]['rank']}{community[2]['suit']}"
+        reveal_cards = community[:3]
         next_text = "📍 Флоп"
     elif stage == "flop":
         game["stage"] = "turn"
-        reveal = f"{community[3]['rank']}{community[3]['suit']}"
+        reveal_cards = community[:4]
         next_text = "📍 Терн"
     elif stage == "turn":
         game["stage"] = "river"
-        reveal = f"{community[4]['rank']}{community[4]['suit']}"
+        reveal_cards = community[:5]
         next_text = "📍 Ривер"
     elif stage == "river":
         await _poker_finish(game)
         return
-    
-    # Отправляем новые карты всем активным
+    else:
+        # Неизвестный этап — завершаем
+        await _poker_finish(game)
+        return
+
+    # Формируем текст общих карт
+    reveal_text = " ".join([f"{c['rank']}{c['suit']}" for c in reveal_cards])
+
+    # Отправляем новый этап всем активным игрокам
     btns = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="📞 Колл", callback_data=f"poker_call_{game['msg_id']}"),
-         InlineKeyboardButton(text="❌ Фолд", callback_data=f"poker_fold_{game['msg_id']}")]
+        [InlineKeyboardButton(text="📞 Колл", callback_data=f"poker_call_{game['uuid']}"),
+         InlineKeyboardButton(text="❌ Фолд", callback_data=f"poker_fold_{game['uuid']}")]
     ])
-    
+
     for uid in active:
         h = game["hands"][uid]
         hole_text = f"{h[0]['rank']}{h[0]['suit']}  {h[1]['rank']}{h[1]['suit']}"
-        
+
         try:
             await bot.send_message(
                 uid,
                 f"🃏 **{next_text}**\n\n"
                 f"Ваши карты: {hole_text}\n"
-                f"Стол: {reveal}\n"
+                f"Стол: {reveal_text}\n"
                 f"💰 Банк: {game['pot']}\n\n"
                 f"Выбирайте действие:",
                 reply_markup=btns,
