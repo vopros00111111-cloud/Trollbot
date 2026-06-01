@@ -1165,22 +1165,26 @@ CASINO_MUTE_DURATION = 1800 # секунд (30 минут)
 # === СОЦИАЛКА: ТОП И ПРОФИЛЬ ===
 @dp.message(Command("top", "топ"))
 async def cmd_top(message: Message):
+    # 🔹 Проверка прав админа
+    data = await get_user_data(message.from_user.id)
+    if not data or data['is_admin'] != 1:
+        return await message.answer("❌ Эта команда доступна только администраторам.")
+
     async with pool.acquire() as conn:
         rows = await conn.fetch(
             'SELECT username, balance FROM users WHERE balance > 0 AND username IS NOT NULL ORDER BY balance DESC LIMIT 10'
         )
-    
+
     if not rows:
         return await message.answer("🏆 Топ пока пуст. Стань первым!")
-    
-    text = "🏆 *ТОП\-10 ИГРОКОВ*\n\n"
+
+    text = r"🏆 *ТОП\-10 ИГРОКОВ*" + "\n\n"
     medals = ["🥇", "🥈", "🥉"]
     for i, row in enumerate(rows):
-        prefix = medals[i] if i < 3 else f"{i+1}\."
-        # Экранируем спецсимволы в юзернейме
-        safe_name = str(row['username']).replace('_', '\_').replace('*', '\*').replace('[', '\[')
+        prefix = medals[i] if i < 3 else f"{i+1}\\."
+        safe_name = str(row['username']).replace('_', r'\_').replace('*', r'\*').replace('[', r'\[')
         text += f"{prefix} @{safe_name} — *{row['balance']}* 💰\n"
-    
+
     await message.answer(text, parse_mode="Markdown")
 @dp.message(Command("profile", "профиль"))
 async def cmd_profile(message: Message):
@@ -1532,7 +1536,8 @@ async def _deal_poker_cards(game: dict):
     game["pot"] = bet * len(players)
     game["active_players"] = [p["user_id"] for p in players]
     
-    # Отправляем карты в ЛС    for p in players:
+    # Отправляем карты в ЛС
+    for p in players:
         uid = p["user_id"]
         h = hands[uid]
         card_text = f"{h[0]['rank']}{h[0]['suit']}  {h[1]['rank']}{h[1]['suit']}"
