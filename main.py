@@ -1335,7 +1335,7 @@ async def _poker_wait_timer(msg_id: int):
 async def poker_join(cb: CallbackQuery):
     msg_id = int(cb.data.split("_")[2])
     user_id = cb.from_user.id
-if msg_id not in active_poker_games:
+    if msg_id not in active_poker_games:
         return await cb.answer("❌ Игра уже началась или отменена!", show_alert=True)
 
     game = active_poker_games[msg_id]
