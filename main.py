@@ -1558,6 +1558,9 @@ async def poker_call(cb: CallbackQuery):
 
     game = active_poker_games[game_uuid]
 
+    # 🔹 ДОБАВЬ ЭТУ ПРОВЕРКУ:
+    if game.get("finished"):
+        return await cb.answer("❌ Игра уже завершена!", show_alert=True)
     if user_id not in game.get("active_players", []):
         return await cb.answer("❌ Вы выбыли из игры!", show_alert=True)
 
@@ -1612,6 +1615,9 @@ async def poker_fold(cb: CallbackQuery):
 
     game = active_poker_games[game_uuid]
 
+    # 🔹 ДОБАВЬ ЭТУ ПРОВЕРКУ:
+    if game.get("finished"):
+        return await cb.answer("❌ Игра уже завершена!", show_alert=True)
     if user_id not in game.get("active_players", []):
         return await cb.answer("❌ Вы уже выбыли!", show_alert=True)
 
@@ -1627,28 +1633,31 @@ async def poker_fold(cb: CallbackQuery):
     await cb.answer("Фолд!")
 
     await _check_poker_stage_end(game)
-
-
+    
 async def _check_poker_stage_end(game: dict):
-    """Проверяет, все ли ответили, и переходит к следующему этапу"""
+    """Проверяет ответы и переходит к следующему этапу"""
+    # 🔹 Защита от повторного вызова
+    if game.get("finished"):
+        return
+
     active = game.get("active_players", [])
     responses = game.get("responses", set())
 
-    # Если остался 1 игрок или меньше — он победил
+    # Если остался 1 игрок — он победил
     if len(active) <= 1:
+        game["finished"] = True
         await _poker_finish(game)
         return
 
-    # Проверяем, все ли активные игроки ответили
+    # Ждём пока все ответят
     if not all(uid in responses for uid in active):
-        return  # Ждём остальных
+        return
 
-    # Все ответили — сбрасываем ответы и переходим дальше
+    # Все ответили — сбрасываем и идём дальше
     game["responses"] = set()
     stage = game.get("stage", "preflop")
     community = game.get("community", [])
 
-    # Определяем следующий этап
     if stage == "preflop":
         game["stage"] = "flop"
         reveal_cards = community[:3]
@@ -1662,17 +1671,23 @@ async def _check_poker_stage_end(game: dict):
         reveal_cards = community[:5]
         next_text = "📍 Ривер"
     elif stage == "river":
+        # 🔹 Финал! Ставим флаг и СРАЗУ удаляем из словаря
+        game["finished"] = True
+        game_uuid = game.get("uuid")
+        if game_uuid and game_uuid in active_poker_games:
+            del active_poker_games[game_uuid]
         await _poker_finish(game)
         return
     else:
-        # Неизвестный этап — завершаем
+        game["finished"] = True
+        game_uuid = game.get("uuid")
+        if game_uuid and game_uuid in active_poker_games:
+            del active_poker_games[game_uuid]
         await _poker_finish(game)
         return
 
-    # Формируем текст общих карт
+    # Отправляем следующий этап всем активным
     reveal_text = " ".join([f"{c['rank']}{c['suit']}" for c in reveal_cards])
-
-    # Отправляем новый этап всем активным игрокам
     btns = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="📞 Колл", callback_data=f"poker_call_{game['uuid']}"),
          InlineKeyboardButton(text="❌ Фолд", callback_data=f"poker_fold_{game['uuid']}")]
@@ -1681,20 +1696,19 @@ async def _check_poker_stage_end(game: dict):
     for uid in active:
         h = game["hands"][uid]
         hole_text = f"{h[0]['rank']}{h[0]['suit']}  {h[1]['rank']}{h[1]['suit']}"
-
         try:
             await bot.send_message(
                 uid,
                 f"🃏 **{next_text}**\n\n"
                 f"Ваши карты: {hole_text}\n"
                 f"Стол: {reveal_text}\n"
-                f"💰 Банк: {game['pot']}\n\n"
-                f"Выбирайте действие:",
+                f"💰 Банк: {game['pot']}\n\nВыбирайте действие:",
                 reply_markup=btns,
                 parse_mode="Markdown"
             )
         except Exception:
             pass
+
 
 
 async def _poker_finish(game: dict):
@@ -1754,12 +1768,7 @@ async def _poker_finish(game: dict):
             await bot.send_message(p["user_id"], f"🃏 Игра окончена!\n{win_text}", parse_mode="Markdown")
         except Exception:
             pass    
-    # Удаляем игру
-    for key in list(active_poker_games.keys()):
-        if active_poker_games[key].get("msg_id") == msg_id:
-            del active_poker_games[key]
-            break
-
+    
 async def main():
     await init_db()
     logger.info("🤖 Запущен с PostgreSQL")
