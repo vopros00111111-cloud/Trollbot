@@ -14,7 +14,7 @@ import random
 import math
 import time
 from aiogram.types import ChatPermissions
-
+import uuid
 app = Flask(__name__)
 
 @app.route('/')
@@ -1279,6 +1279,9 @@ async def cmd_poker_challenge(message: Message):
         [InlineKeyboardButton(text="✅ Принять вызов", callback_data=f"poker_join_{message.message_id}")]
     ])
     
+    # Генерируем уникальный ID для игры (не зависим от msg_id!)
+    game_uuid = str(uuid.uuid4())[:8]
+    
     msg = await message.answer(
         f"🃏 **ПОКЕР**\n\n"
         f"👤 @{message.from_user.username} ищет соперников!\n"
@@ -1286,139 +1289,116 @@ async def cmd_poker_challenge(message: Message):
         f"👥 Игроков: **1/{max_players}**\n"
         f"⏳ Ожидание: **60 сек**\n\n"
         f"Нажмите кнопку, чтобы присоединиться!",
-        reply_markup=btns,
-        parse_mode="Markdown"    )
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="✅ Принять вызов", callback_data=f"poker_join_{game_uuid}")]
+        ]),
+        parse_mode="Markdown"
+    )
     
-    active_poker_games[msg.message_id] = {
+    active_poker_games[game_uuid] = {
+        "uuid": game_uuid,
         "host": user_id,
         "host_name": message.from_user.username,
         "bet": bet,
         "max_players": max_players,
         "players": [{"user_id": user_id, "username": message.from_user.username}],
         "chat_id": message.chat.id,
-        "expires_at": expires_at,
-        "msg_id": msg.message_id
+        "expires_at": time.time() + 60,
+        "msg_id": msg.message_id,
+        "status": "waiting"
     }
     
-    # Запускаем таймер ожидания
-    asyncio.create_task(_poker_wait_timer(msg.message_id))
+    asyncio.create_task(_poker_wait_timer(game_uuid))
 
-async def _poker_wait_timer(msg_id: int):
+async def _poker_wait_timer(game_uuid: str):
     await asyncio.sleep(60)
 
-    # 🔹 Ищем игру перебором
-    game = None
-    for v in active_poker_games.values():
-        if v.get("msg_id") == msg_id:
-            game = v
-            break
+    if game_uuid not in active_poker_games:
+        return
 
-    if not game:
-        return  # Игра уже началась или удалена
+    game = active_poker_games[game_uuid]
 
-    players = game["players"]
-
-    if len(players) >= 2:
+    if len(game["players"]) >= 2:
         await _start_poker_game(game)
     else:
         try:
             await bot.edit_message_text(
                 chat_id=game["chat_id"],
-                message_id=game["msg_id"],  # ← используем актуальный msg_id из game
-                text="🃏 **ПОКЕР ОТМЕНЁН**\n\nНикто не принял вызов за 60 секунд.",
+                message_id=game["msg_id"],
+                text="🃏 **ПОКЕР ОТМЕНЁН**\n\nНикто не принял вызов.",
                 parse_mode="Markdown"
             )
         except Exception:
             pass
-        # Удаляем по актуальному ключу
-        for k in list(active_poker_games.keys()):
-            if active_poker_games[k].get("msg_id") == msg_id:
-                del active_poker_games[k]
-                break
+        del active_poker_games[game_uuid]
 
 @dp.callback_query(F.data.startswith("poker_join_"))
 async def poker_join(cb: CallbackQuery):
-    msg_id = int(cb.data.split("_")[2])
+    game_uuid = cb.data.split("_")[2]
     user_id = cb.from_user.id
 
-    # 🔹 Ищем игру перебором, а не по ключу
-    game = None
-    actual_key = None
-    for k, v in active_poker_games.items():
-        if v.get("msg_id") == msg_id or k == msg_id:
-            game = v
-            actual_key = k
-            break
-
-    if not game:
+    if game_uuid not in active_poker_games:
         return await cb.answer("❌ Игра уже началась или отменена!", show_alert=True)
 
-    if game.get("status") == "started":
-        return await cb.answer("❌ Игра уже началась! Карты разосланы.", show_alert=True)
+    game = active_poker_games[game_uuid]
 
-    # ... остальной код без изменений до блока обновления сообщения ...
+    if game.get("status") != "waiting":
+        return await cb.answer("❌ Игра уже началась!", show_alert=True)
 
-    # 5. Проверка доступа к ЛС (критично для покера)
+    if user_id == game["host"]:
+        return await cb.answer("Вы создатель игры!", show_alert=True)
+
+    if any(p["user_id"] == user_id for p in game["players"]):
+        return await cb.answer("Вы уже в игре!", show_alert=True)
+
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow('SELECT balance FROM users WHERE user_id = $1', user_id)
+        if not row or row['balance'] < game["bet"]:
+            return await cb.answer("❌ Недостаточно монет!", show_alert=True)
+
     try:
-        await bot.send_message(user_id, "🃏 Вы успешно присоединились к столу!")
+        await bot.send_message(user_id, "🃏 Вы присоединились к покеру!")
     except Exception:
-        return await cb.answer(
-            "❌ Вы заблокировали бота! Напишите /start в ЛС бота и нажмите кнопку снова.",
-            show_alert=True
-        )
+        return await cb.answer("❌ Заблокировали бота! Напишите /start в ЛС.", show_alert=True)
 
-    # 6. Добавляем игрока
     game["players"].append({"user_id": user_id, "username": cb.from_user.username})
-    current_count = len(game["players"])
-    max_players = game["max_players"]
+    current = len(game["players"])
+    max_p = game["max_players"]
 
-    # 7. Если набрали максимум — запускаем игру СРАЗУ
-    if current_count >= max_players:
-        await cb.answer(f"🎉 Стол заполнен! Игра начинается...")
-        # Важно: передаём сам объект game, который всё ещё лежит в словаре
+    if current >= max_p:
+        await cb.answer("🎉 Стол заполнен! Начинаем...")
         await _start_poker_game(game)
-        return  # Выходим, чтобы не пытаться редактировать сообщение ниже
+        return
 
-    # 8. Иначе обновляем сообщение в чате
-    btns = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="✅ Принять вызов", callback_data=f"poker_join_{msg_id}")]
-    ])
-
-    remaining_time = max(0, int(game["expires_at"] - time.time()))
-    
+    remaining = max(0, int(game["expires_at"] - time.time()))
     try:
         await cb.message.edit_text(
             f"🃏 **ПОКЕР**\n\n"
             f"👤 @{game['host_name']} ищет соперников!\n"
             f"💰 Ставка: **{game['bet']}** монет\n"
-            f"👥 Игроков: **{current_count}/{max_players}**\n"
-            f"⏳ Ожидание: **{remaining_time} сек**\n\n"
+            f"👥 Игроков: **{current}/{max_p}**\n"
+            f"⏳ Ожидание: **{remaining} сек**\n\n"
             f"Нажмите кнопку, чтобы присоединиться!",
-            reply_markup=btns,
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="✅ Принять вызов", callback_data=f"poker_join_{game_uuid}")]
+            ]),
             parse_mode="Markdown"
         )
-        # 🔹 Обновляем msg_id в словаре на случай если ID изменился
-        game["msg_id"] = cb.message.message_id
-        if actual_key != cb.message.message_id:
-            active_poker_games[cb.message.message_id] = game
-            del active_poker_games[actual_key]
     except Exception:
         pass
-    await cb.answer(f"Вы в игре! ({current_count}/{max_players})")
-
-
 async def _start_poker_game(game: dict):
-    """Заглушка для старта игры. Будет реализована в Части 2."""
-    msg_id = game["msg_id"]
+    """Запускает покерную партию"""
+    game_uuid = game["uuid"]
     chat_id = game["chat_id"]
+    msg_id = game["msg_id"]
     players = game["players"]
     bet = game["bet"]
-    
-    # Списываем ставки у всех
+
+    # Списываем ставки у всех участников
     for player in players:
         await deduct_balance(player["user_id"], bet)
-    
-    # Редактируем исходное сообщение
+
+    # Редактируем сообщение в чате
     player_names = ", ".join([f"@{p['username']}" for p in players])
     try:
         await bot.edit_message_text(
@@ -1434,19 +1414,13 @@ async def _start_poker_game(game: dict):
         )
     except Exception:
         pass
-    
-    # Отправляем заглушку в ЛС каждому (временная)
-    for player in players:
-        try:
-            await bot.send_message(
-                player["user_id"],
-                f"🃏 **ПОКЕР НАЧАЛСЯ!**\n\n"
-                f"Ставка: {bet} | Игроков: {len(players)}\n"
-                f"⏳ Раздача карт скоро...",
-                parse_mode="Markdown"
-            )
-        except Exception:
-            pass
+
+    # 🔹 НЕ удаляем из словаря! Просто ставим статус
+    game["status"] = "started"
+
+    # Раздаём карты
+    await _deal_poker_cards(game)
+    await cb.answer(f"Вы в игре! ({current}/{max_p})")
     # 🔹 НЕ удаляем! Помечаем как начавшуюся
     game["status"] = "started"
     
@@ -1558,8 +1532,8 @@ async def _deal_poker_cards(game: dict):
         card_text = f"{h[0]['rank']}{h[0]['suit']}  {h[1]['rank']}{h[1]['suit']}"
         
         btns = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="📞 Колл", callback_data=f"poker_call_{game['msg_id']}"),
-             InlineKeyboardButton(text="❌ Фолд", callback_data=f"poker_fold_{game['msg_id']}")]
+            [InlineKeyboardButton(text="📞 Колл", callback_data=f"poker_call_{game['uuid']}"),
+             InlineKeyboardButton(text="❌ Фолд", callback_data=f"poker_fold_{game['uuid']}")]
         ])
         
         try:
@@ -1576,21 +1550,19 @@ async def _deal_poker_cards(game: dict):
 # === ПОКЕР: ХОДЫ И ФИНАЛ ===
 @dp.callback_query(F.data.startswith("poker_call_"))
 async def poker_call(cb: CallbackQuery):
-    msg_id = int(cb.data.split("_")[2])
+    game_uuid = cb.data.split("_")[2]
     user_id = cb.from_user.id
 
-    # 🔹 Улучшенный поиск игры
-    game = None
-    for g in active_poker_games.values():
-        if g.get("msg_id") == msg_id:
-            game = g
-            break
+    if game_uuid not in active_poker_games:
+        return await cb.answer("❌ Игра не найдена или завершена!", show_alert=True)
 
-    if not game or user_id not in game.get("active_players", []):
-        return await cb.answer("❌ Игра не найдена или вы уже выбыли!", show_alert=True)
+    game = active_poker_games[game_uuid]
+
+    if user_id not in game.get("active_players", []):
+        return await cb.answer("❌ Вы выбыли из игры!", show_alert=True)
 
     if game.get("stage") not in ("preflop", "flop", "turn", "river"):
-        return await cb.answer("⏳ Игра ещё не началась или уже завершена!", show_alert=True)
+        return await cb.answer("⏳ Ожидание следующего этапа...", show_alert=True)
 
     stage = game["stage"]
     bet = game["bet"]
@@ -1632,18 +1604,16 @@ async def poker_call(cb: CallbackQuery):
 
 @dp.callback_query(F.data.startswith("poker_fold_"))
 async def poker_fold(cb: CallbackQuery):
-    msg_id = int(cb.data.split("_")[2])
+    game_uuid = cb.data.split("_")[2]
     user_id = cb.from_user.id
 
-    # 🔹 Улучшенный поиск игры
-    game = None
-    for g in active_poker_games.values():
-        if g.get("msg_id") == msg_id:
-            game = g
-            break
+    if game_uuid not in active_poker_games:
+        return await cb.answer("❌ Игра не найдена или завершена!", show_alert=True)
 
-    if not game or user_id not in game.get("active_players", []):
-        return await cb.answer("❌ Игра не найдена или вы уже выбыли!", show_alert=True)
+    game = active_poker_games[game_uuid]
+
+    if user_id not in game.get("active_players", []):
+        return await cb.answer("❌ Вы уже выбыли!", show_alert=True)
 
     game["active_players"].remove(user_id)
     if "responses" not in game:
