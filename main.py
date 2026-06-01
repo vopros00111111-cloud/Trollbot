@@ -44,6 +44,7 @@ pool = None
 
 # 🔹 Словарь для хранения активных таймеров
 active_timers = {}
+poker_locks = {}  # {game_uuid: asyncio.Lock()}
 QUIZ_TIME_LIMIT = 15  # секунд на вопрос
 async def init_db():
     global pool
@@ -1635,56 +1636,87 @@ async def poker_fold(cb: CallbackQuery):
     await _check_poker_stage_end(game)
     
 async def _check_poker_stage_end(game: dict):
-    """Проверяет ответы и переходит к следующему этапу"""
-    # 🔹 Защита от повторного вызова
-    if game.get("finished"):
+    """Проверяет ответы и переходит к следующему этапу (с защитой от race condition)"""
+    game_uuid = game.get("uuid")
+    if not game_uuid:
         return
 
-    active = game.get("active_players", [])
-    responses = game.get("responses", set())
+    # Создаём или получаем блокировку для этой игры
+    if game_uuid not in poker_locks:
+        poker_locks[game_uuid] = asyncio.Lock()
 
-    # Если остался 1 игрок — он победил
-    if len(active) <= 1:
-        game["finished"] = True
-        await _poker_finish(game)
-        return
+    async with poker_locks[game_uuid]:
+        # 🔹 Повторная проверка ВНУТРИ блокировки
+        if game.get("finished"):
+            return
 
-    # Ждём пока все ответят
-    if not all(uid in responses for uid in active):
-        return
+        active = game.get("active_players", [])
+        responses = game.get("responses", set())
 
-    # Все ответили — сбрасываем и идём дальше
-    game["responses"] = set()
-    stage = game.get("stage", "preflop")
-    community = game.get("community", [])
+        # Если остался 1 игрок — он победил
+        if len(active) <= 1:
+            game["finished"] = True
+            await _poker_finish(game)
+            poker_locks.pop(game_uuid, None)
+            return
 
-    if stage == "preflop":
-        game["stage"] = "flop"
-        reveal_cards = community[:3]
-        next_text = "📍 Флоп"
-    elif stage == "flop":
-        game["stage"] = "turn"
-        reveal_cards = community[:4]
-        next_text = "📍 Терн"
-    elif stage == "turn":
-        game["stage"] = "river"
-        reveal_cards = community[:5]
-        next_text = "📍 Ривер"
-    elif stage == "river":
-        # 🔹 Финал! Ставим флаг и СРАЗУ удаляем из словаря
-        game["finished"] = True
-        game_uuid = game.get("uuid")
-        if game_uuid and game_uuid in active_poker_games:
-            del active_poker_games[game_uuid]
-        await _poker_finish(game)
-        return
-    else:
-        game["finished"] = True
-        game_uuid = game.get("uuid")
-        if game_uuid and game_uuid in active_poker_games:
-            del active_poker_games[game_uuid]
-        await _poker_finish(game)
-        return
+        # Ждём пока все ответят
+        if not all(uid in responses for uid in active):
+            return  # Выходим из блокировки, ждём следующего ответа
+
+        # Все ответили — сбрасываем и идём дальше
+        game["responses"] = set()
+        stage = game.get("stage", "preflop")
+        community = game.get("community", [])
+
+        if stage == "preflop":
+            game["stage"] = "flop"
+            reveal_cards = community[:3]
+            next_text = "📍 Флоп"
+        elif stage == "flop":
+            game["stage"] = "turn"
+            reveal_cards = community[:4]
+            next_text = "📍 Терн"
+        elif stage == "turn":
+            game["stage"] = "river"
+            reveal_cards = community[:5]
+            next_text = "📍 Ривер"
+        elif stage == "river":
+            game["finished"] = True
+            # Удаляем из словаря ДО finish
+            active_poker_games.pop(game_uuid, None)
+            await _poker_finish(game)
+            poker_locks.pop(game_uuid, None)
+            return
+        else:
+            game["finished"] = True
+            active_poker_games.pop(game_uuid, None)
+            await _poker_finish(game)
+            poker_locks.pop(game_uuid, None)
+            return
+
+        # Отправляем следующий этап всем активным
+        reveal_text = " ".join([f"{c['rank']}{c['suit']}" for c in reveal_cards])
+        btns = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="📞 Колл", callback_data=f"poker_call_{game_uuid}"),
+             InlineKeyboardButton(text="❌ Фолд", callback_data=f"poker_fold_{game_uuid}")]
+        ])
+
+        for uid in active:
+            h = game["hands"][uid]
+            hole_text = f"{h[0]['rank']}{h[0]['suit']}  {h[1]['rank']}{h[1]['suit']}"
+            try:
+                await bot.send_message(
+                    uid,
+                    f"🃏 **{next_text}**\n\n"
+                    f"Ваши карты: {hole_text}\n"
+                    f"Стол: {reveal_text}\n"
+                    f"💰 Банк: {game['pot']}\n\nВыбирайте действие:",
+                    reply_markup=btns,
+                    parse_mode="Markdown"
+                )
+            except Exception:
+                pass
 
     # Отправляем следующий этап всем активным
     reveal_text = " ".join([f"{c['rank']}{c['suit']}" for c in reveal_cards])
