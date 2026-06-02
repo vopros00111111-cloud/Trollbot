@@ -1706,55 +1706,93 @@ async def _check_poker_stage_end(game: dict):
 
 
 async def _poker_finish(game: dict):
-    """Определяет победителя и раздаёт банк"""
-    active = game["active_players"]
-    pot = game["pot"]
-    community = game["community"]
-    hands = game["hands"]
-    chat_id = game["chat_id"]
-    msg_id = game["msg_id"]
-    
+    """Определяет победителя, показывает карты всех и раздаёт банк"""
+    active = game.get("active_players", [])
+    pot = game.get("pot", 0)
+    community = game.get("community", [])
+    hands = game.get("hands", {})
+    chat_id = game.get("chat_id")
+    msg_id = game.get("msg_id")
+    players = game.get("players", [])
+
+    # Формируем текст общих карт
+    comm_text = " ".join([f"{c['rank']}{c['suit']}" for c in community])
+
     if len(active) == 1:
-        # Все остальные сбросили — последний выигрывает
+        # Все сбросили — один остался
         winner_id = active[0]
-        winner_name = next(p["username"] for p in game["players"] if p["user_id"] == winner_id)
-        win_text = f"🏆 @{winner_name} забрал банк **{pot}** (все остальные сбросили)!"
+        winner_name = next((p["username"] for p in players if p["user_id"] == winner_id), "???")
+        
+        # Показываем карты победителя (остальные сбросили)
+        h = hands.get(winner_id, [])
+        winner_cards = f"{h[0]['rank']}{h[0]['suit']} {h[1]['rank']}{h[1]['suit']}" if len(h) == 2 else "???"
+        
+        result_text = (
+            f"🃏 **ИГРА ОКОНЧЕНА!**\n\n"
+            f"🎴 Стол: {comm_text}\n\n"
+            f"🏆 @{winner_name} забрал **{pot}** 💰\n"
+            f"📝 Все остальные сбросили\n\n"
+            f"🃏 Карты победителя: {winner_cards}"
+        )
     else:
-        # Шоудаун — оцениваем руки
+        # Шоудаун — оцениваем руки всех активных
         results = []
         for uid in active:
             score, name = evaluate_hand(hands[uid], community)
-            username = next(p["username"] for p in game["players"] if p["user_id"] == uid)
-            results.append((score, uid, username, name))
-        
-        results.sort(key=lambda x: x[0], reverse=True)
-        best_score = results[0][0]
-        winners = [r for r in results if r[0] == best_score]
-        
+            username = next((p["username"] for p in players if p["user_id"] == uid), "???")
+            h = hands[uid]
+            cards_str = f"{h[0]['rank']}{h[0]['suit']} {h[1]['rank']}{h[1]['suit']}"
+            results.append({
+                "score": score,
+                "uid": uid,
+                "username": username,
+                "combo": name,
+                "cards": cards_str
+            })
+
+        results.sort(key=lambda x: x["score"], reverse=True)
+        best_score = results[0]["score"]
+        winners = [r for r in results if r["score"] == best_score]
+
         share = pot // len(winners)
-        winner_names = ", ".join([f"@{w[2]}" for w in winners])
-        combo_name = winners[0][3]
-        win_text = f"🏆 {winner_names} выиграли **{pot}** с комбинацией **{combo_name}**!"
-        
+        winner_names = ", ".join([f"@{w['username']}" for w in winners])
+        combo_name = winners[0]["combo"]
+
         # Начисляем выигрыш
         for w in winners:
-            await add_winnings(w[1], share, share, "poker")
-    
-    # Показываем общие карты
-    comm_text = " ".join([f"{c['rank']}{c['suit']}" for c in community])
-    
+            await add_winnings(w["uid"], share, share, "poker")
+
+        # Формируем список всех игроков с картами
+        players_text = ""
+        for r in results:
+            marker = "🏆" if r["score"] == best_score else "▪️"
+            players_text += f"{marker} @{r['username']}: {r['cards']} ({r['combo']})\n"
+
+        result_text = (
+            f"🃏 **ИГРА ОКОНЧЕНА!**\n\n"
+            f"🎴 Стол: {comm_text}\n\n"
+            f"🏆 {winner_names} выиграли **{pot}** 💰\n"
+            f"📝 Комбинация: **{combo_name}**\n\n"
+            f"🃏 **Карты игроков:**\n{players_text}"
+        )
+
     # Редактируем сообщение в чате
     try:
         await bot.edit_message_text(
             chat_id=chat_id,
             message_id=msg_id,
-            text=f"🃏 **ПОКЕР ЗАВЕРШЁН!**\n\n"
-                 f"🎴 Стол: {comm_text}\n\n"
-                 f"{win_text}",
+            text=result_text,
             parse_mode="Markdown"
         )
     except Exception:
         pass
+
+    # Уведомляем всех участников в ЛС
+    for p in players:
+        try:
+            await bot.send_message(p["user_id"], result_text, parse_mode="Markdown")
+        except Exception:
+            pass
     
     # Уведомляем всех участников в ЛС
     for p in game["players"]:
