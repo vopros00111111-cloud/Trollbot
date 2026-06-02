@@ -1167,15 +1167,8 @@ CASINO_MUTE_DURATION = 1800 # секунд (30 минут)
 # === СОЦИАЛКА: ТОП И ПРОФИЛЬ ===
 @dp.message(Command("top", "топ"))
 async def cmd_top(message: Message):
-    # 🔹 Надёжная проверка админа
-    data = await get_user_data(message.from_user.id)
-    is_admin = False
-    if data:
-        admin_val = data.get('is_admin', 0)
-        is_admin = admin_val == 1 or admin_val is True or str(admin_val) == '1'
-
-    if not is_admin:
-        return await message.answer("❌ Эта команда доступна только администраторам.")
+    if not await check_admin(message.from_user.id):
+        return await message.answer("🔒 Только админ")
 
     async with pool.acquire() as conn:
         rows = await conn.fetch(
