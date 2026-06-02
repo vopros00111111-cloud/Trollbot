@@ -1421,11 +1421,7 @@ async def _start_poker_game(game: dict):
 
     # Раздаём карты
     await _deal_poker_cards(game)
-    # 🔹 НЕ удаляем! Помечаем как начавшуюся
-    game["status"] = "started"
     
-    # Раздача карт
-    await _deal_poker_cards(game)
     # TODO: Здесь будет логика раздачи карт (Часть 2)
 # === ПОКЕР: КОЛОДА И ОЦЕНКА РУК ===
 import itertools
