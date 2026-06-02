@@ -1552,56 +1552,48 @@ async def poker_call(cb: CallbackQuery):
     user_id = cb.from_user.id
 
     if game_uuid not in active_poker_games:
-        return await cb.answer("❌ Игра не найдена или завершена!", show_alert=True)
+        return await cb.answer("❌ Игра не найдена!", show_alert=True)
 
     game = active_poker_games[game_uuid]
 
-    # 🔹 ДОБАВЬ ЭТУ ПРОВЕРКУ:
-    if game.get("finished"):
-        return await cb.answer("❌ Игра уже завершена!", show_alert=True)
-    if user_id not in game.get("active_players", []):
-        return await cb.answer("❌ Вы выбыли из игры!", show_alert=True)
+    if game_uuid not in poker_locks:
+        poker_locks[game_uuid] = asyncio.Lock()
 
-    if game.get("stage") not in ("preflop", "flop", "turn", "river"):
-        return await cb.answer("⏳ Ожидание следующего этапа...", show_alert=True)
+    async with poker_locks[game_uuid]:
+        if game.get("finished"):
+            return await cb.answer("❌ Игра завершена!", show_alert=True)
+        if user_id not in game.get("active_players", []):
+            return await cb.answer("❌ Вы выбыли!", show_alert=True)
+        if user_id in game.get("responses", set()):
+            return await cb.answer("⏳ Уже ответили!", show_alert=True)
 
-    stage = game["stage"]
-    bet = game["bet"]
+        stage = game["stage"]
+        bet = game["bet"]
+        stage_bet = bet if stage in ("preflop", "flop") else bet * 2
 
-    # Ставка на текущем этапе
-    if stage in ("preflop", "flop"):
-        stage_bet = bet
-    else:  # turn, river
-        stage_bet = bet * 2
+        ok, _ = await deduct_balance(user_id, stage_bet)
+        if not ok:
+            game["active_players"].remove(user_id)
+            try:
+                await cb.message.edit_text("❌ Нет монет! Авто-фолд.")
+            except Exception:
+                pass
+        else:
+            game["pot"] += stage_bet
+            if "responses" not in game:
+                game["responses"] = set()
+            game["responses"].add(user_id)
+            try:
+                await cb.message.edit_text(
+                    f"✅ Колл ({stage_bet}) | 💰 Банк: {game['pot']}\n⏳ Ждём...",
+                    parse_mode="Markdown"
+                )
+            except Exception:
+                pass
+            await cb.answer("Колл!")
 
-    # Списываем ставку
-    ok, _ = await deduct_balance(user_id, stage_bet)
-    if not ok:
-        game["active_players"].remove(user_id)
-        try:
-            await cb.message.edit_text("❌ Недостаточно монет! Авто-фолд.")
-        except Exception:
-            pass
-        await _check_poker_stage_end(game)
-        return
-
-    game["pot"] += stage_bet
-
-    if "responses" not in game:
-        game["responses"] = set()
-    game["responses"].add(user_id)
-
-    try:
-        await cb.message.edit_text(
-            f"✅ Вы уравняли ({stage_bet})\n💰 Банк: {game['pot']}\n\n⏳ Ждём других...",
-            parse_mode="Markdown"
-        )
-    except Exception:
-        pass
-    await cb.answer("Колл!")
-
+    # Вне блокировки — чтобы не было дедлока
     await _check_poker_stage_end(game)
-
 
 @dp.callback_query(F.data.startswith("poker_fold_"))
 async def poker_fold(cb: CallbackQuery):
@@ -1609,59 +1601,59 @@ async def poker_fold(cb: CallbackQuery):
     user_id = cb.from_user.id
 
     if game_uuid not in active_poker_games:
-        return await cb.answer("❌ Игра не найдена или завершена!", show_alert=True)
+        return await cb.answer("❌ Игра не найдена!", show_alert=True)
 
     game = active_poker_games[game_uuid]
 
-    # 🔹 ДОБАВЬ ЭТУ ПРОВЕРКУ:
-    if game.get("finished"):
-        return await cb.answer("❌ Игра уже завершена!", show_alert=True)
-    if user_id not in game.get("active_players", []):
-        return await cb.answer("❌ Вы уже выбыли!", show_alert=True)
-
-    game["active_players"].remove(user_id)
-    if "responses" not in game:
-        game["responses"] = set()
-    game["responses"].add(user_id)
-
-    try:
-        await cb.message.edit_text("❌ Вы сбросили карты.", parse_mode="Markdown")
-    except Exception:
-        pass
-    await cb.answer("Фолд!")
-
-    await _check_poker_stage_end(game)
-    
-async def _check_poker_stage_end(game: dict):
-    """Проверяет ответы и переходит к следующему этапу (с защитой от race condition)"""
-    game_uuid = game.get("uuid")
-    if not game_uuid:
-        return
-
-    # Создаём или получаем блокировку для этой игры
     if game_uuid not in poker_locks:
         poker_locks[game_uuid] = asyncio.Lock()
 
     async with poker_locks[game_uuid]:
-        # 🔹 Повторная проверка ВНУТРИ блокировки
         if game.get("finished"):
+            return await cb.answer("❌ Игра завершена!", show_alert=True)
+        if user_id not in game.get("active_players", []):
+            return await cb.answer("❌ Вы выбыли!", show_alert=True)
+
+        game["active_players"].remove(user_id)
+        if "responses" not in game:
+            game["responses"] = set()
+        game["responses"].add(user_id)
+        try:
+            await cb.message.edit_text("❌ Вы сбросили карты.", parse_mode="Markdown")
+        except Exception:
+            pass
+        await cb.answer("Фолд!")
+
+    # Вне блокировки
+    await _check_poker_stage_end(game)
+    
+async def _check_poker_stage_end(game: dict):
+    game_uuid = game.get("uuid")
+    if not game_uuid:
+        return
+
+    if game_uuid not in poker_locks:
+        poker_locks[game_uuid] = asyncio.Lock()
+
+    async with poker_locks[game_uuid]:
+        # Двойная защита: finished + transitioning
+        if game.get("finished") or game.get("transitioning"):
             return
 
         active = game.get("active_players", [])
         responses = game.get("responses", set())
 
-        # Если остался 1 игрок — он победил
         if len(active) <= 1:
             game["finished"] = True
             await _poker_finish(game)
             poker_locks.pop(game_uuid, None)
             return
 
-        # Ждём пока все ответят
         if not all(uid in responses for uid in active):
-            return  # Выходим из блокировки, ждём следующего ответа
+            return
 
-        # Все ответили — сбрасываем и идём дальше
+        # Ставим флаг ДО любых действий
+        game["transitioning"] = True
         game["responses"] = set()
         stage = game.get("stage", "preflop")
         community = game.get("community", [])
@@ -1680,7 +1672,6 @@ async def _check_poker_stage_end(game: dict):
             next_text = "📍 Ривер"
         elif stage == "river":
             game["finished"] = True
-            # Удаляем из словаря ДО finish
             active_poker_games.pop(game_uuid, None)
             await _poker_finish(game)
             poker_locks.pop(game_uuid, None)
@@ -1692,7 +1683,6 @@ async def _check_poker_stage_end(game: dict):
             poker_locks.pop(game_uuid, None)
             return
 
-        # Отправляем следующий этап всем активным
         reveal_text = " ".join([f"{c['rank']}{c['suit']}" for c in reveal_cards])
         btns = InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="📞 Колл", callback_data=f"poker_call_{game_uuid}"),
@@ -1715,29 +1705,8 @@ async def _check_poker_stage_end(game: dict):
             except Exception:
                 pass
 
-    # Отправляем следующий этап всем активным
-    reveal_text = " ".join([f"{c['rank']}{c['suit']}" for c in reveal_cards])
-    btns = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="📞 Колл", callback_data=f"poker_call_{game['uuid']}"),
-         InlineKeyboardButton(text="❌ Фолд", callback_data=f"poker_fold_{game['uuid']}")]
-    ])
-
-    for uid in active:
-        h = game["hands"][uid]
-        hole_text = f"{h[0]['rank']}{h[0]['suit']}  {h[1]['rank']}{h[1]['suit']}"
-        try:
-            await bot.send_message(
-                uid,
-                f"🃏 **{next_text}**\n\n"
-                f"Ваши карты: {hole_text}\n"
-                f"Стол: {reveal_text}\n"
-                f"💰 Банк: {game['pot']}\n\nВыбирайте действие:",
-                reply_markup=btns,
-                parse_mode="Markdown"
-            )
-        except Exception:
-            pass
-
+        # Снимаем флаг после отправки
+        game["transitioning"] = False
 
 
 async def _poker_finish(game: dict):
