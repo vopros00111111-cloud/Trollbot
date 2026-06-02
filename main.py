@@ -170,6 +170,7 @@ async def cmd_casino_menu(message: Message):
         "🎰 /slots [ставка] — Игровые автоматы\n"
         "🎡 /roulette [ставка] [цвет/число] — Рулетка\n"
         "🃏 /blackjack [ставка] — Блэкджек\n"
+        "🎴 /poker [ставка] [количество игроков] — Техасский покер\n\n"
         "⚠️ Шанс есть всегда, но удача любит смелых!"
     )
     await message.answer(text, parse_mode="Markdown")
