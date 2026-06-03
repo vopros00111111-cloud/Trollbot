@@ -1496,7 +1496,10 @@ def _evaluate_5_cards(cards):
 
 
 async def _deal_poker_cards(game: dict):
-    """Раздаёт карты всем игрокам и отправляет в ЛС"""
+    # 🔹 Защита от повторной раздачи
+    if game.get("cards_dealt"):
+        return
+    game["cards_dealt"] = True
     deck = create_deck()
     random.shuffle(deck)
     
@@ -1680,12 +1683,16 @@ async def _check_poker_stage_end(game: dict):
             poker_locks.pop(game_uuid, None)
             return
 
+        
+# 🔹 ПРОВЕРКА: если игра завершена — НЕ отправляем карты!
+        if game.get("finished"):
+            return
+
         reveal_text = " ".join([f"{c['rank']}{c['suit']}" for c in reveal_cards])
         btns = InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="📞 Колл", callback_data=f"poker_call_{game_uuid}"),
              InlineKeyboardButton(text="❌ Фолд", callback_data=f"poker_fold_{game_uuid}")]
         ])
-
         for uid in active:
             h = game["hands"][uid]
             hole_text = f"{h[0]['rank']}{h[0]['suit']}  {h[1]['rank']}{h[1]['suit']}"
