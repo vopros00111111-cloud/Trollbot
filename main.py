@@ -1540,6 +1540,8 @@ async def _deal_poker_cards(game: dict):
             )
         except Exception:
             pass  # Игрок заблокировал бота — пропускаем
+# 🔹 Запускаем таймер на префлоп
+    asyncio.create_task(_poker_move_timer(game["uuid"], "preflop"))
 # === ПОКЕР: ХОДЫ И ФИНАЛ ===
 @dp.callback_query(F.data.startswith("poker_call_"))
 async def poker_call(cb: CallbackQuery):
@@ -1699,10 +1701,44 @@ async def _check_poker_stage_end(game: dict):
                 )
             except Exception:
                 pass
-
         # Снимаем флаг после отправки
         game["transitioning"] = False
+# 🔹 Запускаем таймер на ход для нового этапа
+        asyncio.create_task(_poker_move_timer(game_uuid, game["stage"]))
+async def _poker_move_timer(game_uuid: str, stage: str):
+    """Таймер на ход: 30 секунд. Если игрок не ответил — авто-фолд."""
+    await asyncio.sleep(30)
 
+    if game_uuid not in active_poker_games:
+        return
+
+    game = active_poker_games[game_uuid]
+
+    # Если игра уже завершилась или перешла на другой этап — выходим
+    if game.get("finished") or game.get("stage") != stage:
+        return
+
+    active = game.get("active_players", [])
+    responses = game.get("responses", set())
+
+    # Находим всех кто НЕ ответил
+    timed_out = [uid for uid in active if uid not in responses]
+
+    if not timed_out:
+        return  # Все ответили, таймер не нужен
+
+    # Авто-фолд для каждого зависшего
+    for uid in timed_out:
+        if uid in game.get("active_players", []):
+            game["active_players"].remove(uid)
+            game.setdefault("responses", set()).add(uid)
+            try:
+                await bot.send_message(uid, "⏰ Время вышло! Авто-фолд.")
+            except Exception:
+                pass
+
+    # Проверяем, что делать дальше
+    await _check_poker_stage_end(game)
 
 async def _poker_finish(game: dict):
     """Определяет победителя, показывает карты всех и раздаёт банк"""
