@@ -189,7 +189,22 @@ async def cmd_start(message: Message):
     text += "/casino — казино\n"
     text += "/help — полная справка"
     await message.answer(text, parse_mode="Markdown")
+from aiogram.types import WebAppInfo, InlineKeyboardMarkup, InlineKeyboardButton
 
+@dp.message(Command("app", "играть"))
+async def cmd_open_app(message: Message):
+    # Ссылка на твой GitHub Pages
+    webapp_url = "https://vopros00111111-cloud.github.io/Trollbotapp/"
+    
+    # Создаем кнопку WebApp
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🎮 Открыть BlessCoin", web_app=WebAppInfo(url=webapp_url))]
+    ])
+    
+    await message.answer(
+        "🚀 Нажми на кнопку ниже, чтобы открыть приложение!", 
+        reply_markup=keyboard
+)
 @dp.message(Command("history", "logs", "история"))
 async def cmd_history(message: Message):
     if not await check_admin(message.from_user.id):
