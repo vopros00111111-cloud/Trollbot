@@ -80,6 +80,24 @@ async def init_db():
                 PRIMARY KEY (quiz_id, user_id, question_index)
             )
         ''')
+        # === ТАБЛИЦА СТАТИСТИКИ ===
+        await conn.execute('''
+            CREATE TABLE IF NOT EXISTS stats (
+                user_id BIGINT PRIMARY KEY REFERENCES users(user_id) ON DELETE CASCADE,
+                total_games INTEGER DEFAULT 0,
+                total_won BIGINT DEFAULT 0
+            )
+        ''')
+        # === ТАБЛИЦА КАТАЛОГА ===
+        await conn.execute('''
+            CREATE TABLE IF NOT EXISTS catalog (
+                id SERIAL PRIMARY KEY,
+                name TEXT NOT NULL,
+                description TEXT,
+                price INTEGER NOT NULL,
+                image_url TEXT
+            )
+        ''')
 
 async def register_user(user_id: int, username: str):
     clean_username = username.replace("@", "") if username else f"user_{user_id}"
@@ -1858,15 +1876,35 @@ async def handle_balance(request):
 async def handle_stats(request):
     """GET /api/stats/{user_id}"""
     user_id = int(request.match_info['user_id'])
+    
     async with pool.acquire() as conn:
-        row = await conn.fetchrow('SELECT wins, losses, total_games FROM stats WHERE user_id = $1', user_id)
-    if row:
-        return web.json_response({
-            'wins': row['wins'],
-            'losses': row['losses'],
-            'totalGames': row['total_games']
-        })
-    return web.json_response({'wins': 0, 'losses': 0, 'totalGames': 0})
+        # Место в топе
+        rank_row = await conn.fetchrow(
+            '''
+            SELECT COUNT(*) + 1 as rank 
+            FROM users 
+            WHERE balance > (
+                SELECT balance FROM users WHERE user_id = $1
+            )
+            ''',
+            user_id
+        )
+        
+        # Статистика из таблицы stats
+        stats_row = await conn.fetchrow(
+            'SELECT total_games, total_won FROM stats WHERE user_id = $1', 
+            user_id
+        )
+    
+    rank = rank_row['rank'] if rank_row else 1
+    total_games = stats_row['total_games'] if stats_row else 0
+    total_won = stats_row['total_won'] if stats_row else 0
+    
+    return web.json_response({
+        'rank': rank,
+        'totalGames': total_games,
+        'totalWon': total_won
+    })
 
 async def handle_top(request):
     """GET /api/top?limit=10"""
@@ -1881,11 +1919,17 @@ async def handle_top(request):
 
 async def handle_catalog(request):
     """GET /api/catalog"""
-    catalog = [
-        {'id': 1, 'name': 'Бустер удачи', 'description': '+10% к выигрышу', 'price': 500, 'icon': '🎁'},
-        {'id': 2, 'name': 'VIP статус', 'description': 'Эксклюзивные возможности', 'price': 5000, 'icon': '⭐'}
+    items = await get_catalog()
+    result = [
+        {
+            'id': r['id'],
+            'name': r['name'],
+            'description': r['description'],
+            'price': r['price']
+        }
+        for r in items
     ]
-    return web.json_response(catalog)
+    return web.json_response(result)
 
 async def handle_achievements(request):
     """GET /api/achievements/{user_id}"""
@@ -1924,6 +1968,16 @@ async def handle_create_table(request):
     data = await request.json()
     # Здесь потом добавишь реальную логику создания стола
     return web.json_response({'success': True, 'message': 'Стол создан'})
+async def handle_games(request):
+    """GET /api/games"""
+    games = [
+        {'id': 'poker', 'name': 'Покер', 'description': 'Техасский Холдем', 'icon': '🃏'},
+        {'id': 'durak', 'name': 'Дурак', 'description': 'Классический подкидной', 'icon': ''},
+        {'id': 'slots', 'name': 'Слоты', 'description': 'Игровой автомат', 'icon': '🎰'},
+        {'id': 'roulette', 'name': 'Рулетка', 'description': 'Красное/Чёрное', 'icon': '🎯'},
+        {'id': 'blackjack', 'name': 'Блэкджек', 'description': '21 очко', 'icon': ''}
+    ]
+    return web.json_response(games)
 async def handle_health(request):
     """Простая страница, чтобы Render не засыпал"""
     return web.Response(text="Trollcoin Bot is running!")
@@ -1953,6 +2007,7 @@ cors.add(web_app.router.add_get('/api/catalog', handle_catalog))
 cors.add(web_app.router.add_get('/api/achievements/{user_id}', handle_achievements))
 cors.add(web_app.router.add_post('/api/transfer', handle_transfer))
 cors.add(web_app.router.add_post('/api/create-table', handle_create_table))
+cors.add(web_app.router.add_get('/api/games', handle_games))
 cors.add(web_app.router.add_get('/', handle_health))
 cors.add(web_app.router.add_get('/health', handle_health))
 
