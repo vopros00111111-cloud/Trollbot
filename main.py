@@ -15,20 +15,6 @@ import math
 import time
 from aiogram.types import ChatPermissions
 import uuid
-app = Flask(__name__)
-
-@app.route('/')
-def home():
-    return "Trollcoin Bot is running!"
-
-@app.route('/health')
-def health():
-    return "OK"
-
-def run_flask():
-    app.run(host='0.0.0.0', port=10000)
-
-threading.Thread(target=run_flask, daemon=True).start()
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 ADMIN_ID = int(os.getenv("ADMIN_ID"))
@@ -1951,23 +1937,9 @@ web_app.router.add_post('/api/transfer', handle_transfer)
 web_app.router.add_post('/api/create-table', handle_create_table)
 
 import os
-import socket
 
 async def start_web_server():
-    """Запускаем веб-сервер, находя свободный порт"""
-    # Render даёт порт через переменную окружения
     port = int(os.environ.get("PORT", 10000))
-    
-    # Проверяем свободен ли порт
-    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    try:
-        sock.bind(('0.0.0.0', port))
-        sock.close()
-    except OSError:
-        # Порт занят, используем другой
-        port = 8080
-        print(f"⚠️ Порт {os.environ.get('PORT')} занят, используем {port}")
-    
     runner = web.AppRunner(web_app)
     await runner.setup()
     site = web.TCPSite(runner, '0.0.0.0', port)
