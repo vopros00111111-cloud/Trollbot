@@ -1950,13 +1950,16 @@ web_app.router.add_get('/api/achievements/{user_id}', handle_achievements)
 web_app.router.add_post('/api/transfer', handle_transfer)
 web_app.router.add_post('/api/create-table', handle_create_table)
 
+import os
+
 async def start_web_server():
-    """Запускаем веб-сервер на порту 8080"""
+    """Запускаем веб-сервер на порту из переменной окружения"""
+    port = int(os.environ.get("PORT", 8080))
     runner = web.AppRunner(web_app)
     await runner.setup()
-    site = web.TCPSite(runner, '0.0.0.0', 8080)
+    site = web.TCPSite(runner, '0.0.0.0', port)
     await site.start()
-    print("✅ Web API server started on port 8080")
+    print(f"✅ Web API server started on port {port}")
 # ============================================
 # ОСНОВНАЯ ФУНКЦИЯ
 # ============================================    
