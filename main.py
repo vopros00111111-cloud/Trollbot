@@ -1891,7 +1891,8 @@ async def handle_achievements(request):
     """GET /api/achievements/{user_id}"""
     return web.json_response(['🏆 Первый выигрыш', '💰 Богач'])
 
-async def handle_transfer(request):    """POST /api/transfer"""
+async def handle_transfer(request):
+    """POST /api/transfer"""
     data = await request.json()
     from_id = data['from_id']
     to_username = data['to_username'].replace('@', '')
