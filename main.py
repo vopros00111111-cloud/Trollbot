@@ -1879,33 +1879,28 @@ async def handle_stats(request):
     
     async with pool.acquire() as conn:
         # Место в топе
-        rank_row = await conn.fetchrow(
-            '''
-            SELECT COUNT(*) + 1 as rank 
-            FROM users 
-            WHERE balance > (
-                SELECT balance FROM users WHERE user_id = $1
-            )
-            ''',
+        rank = await conn.fetchval(
+            "SELECT COUNT(*) + 1 FROM users WHERE balance > (SELECT balance FROM users WHERE user_id = $1)",
             user_id
-        )
+        ) or 1
         
-        # Статистика из таблицы stats
-        stats_row = await conn.fetchrow(
-            'SELECT total_games, total_won FROM stats WHERE user_id = $1', 
+        # Игр сыграно (все транзакции)
+        total_games = await conn.fetchval(
+            "SELECT COUNT(*) FROM transactions WHERE sender_id = $1 OR receiver_id = $1",
             user_id
-        )
-    
-    rank = rank_row['rank'] if rank_row else 1
-    total_games = stats_row['total_games'] if stats_row else 0
-    total_won = stats_row['total_won'] if stats_row else 0
+        ) or 0
+        
+        # Выиграно монет
+        total_won = await conn.fetchval(
+            "SELECT COALESCE(SUM(amount), 0) FROM transactions WHERE receiver_id = $1 AND type LIKE '%_win'",
+            user_id
+        ) or 0
     
     return web.json_response({
         'rank': rank,
         'totalGames': total_games,
         'totalWon': total_won
     })
-
 async def handle_top(request):
     """GET /api/top?limit=10"""
     limit = int(request.query.get('limit', 10))
@@ -1972,10 +1967,10 @@ async def handle_games(request):
     """GET /api/games"""
     games = [
         {'id': 'poker', 'name': 'Покер', 'description': 'Техасский Холдем', 'icon': '🃏'},
-        {'id': 'durak', 'name': 'Дурак', 'description': 'Классический подкидной', 'icon': ''},
+        {'id': 'durak', 'name': 'Дурак', 'description': 'Классический подкидной', 'icon': '🃏'},
         {'id': 'slots', 'name': 'Слоты', 'description': 'Игровой автомат', 'icon': '🎰'},
         {'id': 'roulette', 'name': 'Рулетка', 'description': 'Красное/Чёрное', 'icon': '🎯'},
-        {'id': 'blackjack', 'name': 'Блэкджек', 'description': '21 очко', 'icon': ''}
+        {'id': 'blackjack', 'name': 'Блэкджек', 'description': '21 очко', 'icon': '🎴'}
     ]
     return web.json_response(games)
 async def handle_health(request):
