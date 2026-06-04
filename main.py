@@ -1973,6 +1973,7 @@ async def handle_games(request):
         {'id': 'blackjack', 'name': 'Блэкджек', 'description': '21 очко', 'icon': '🎴'}
     ]
     return web.json_response(games)
+
 async def handle_game_bet(request):
     """POST /api/game-bet - Списать ставку"""
     data = await request.json()
@@ -2026,6 +2027,8 @@ cors.add(web_app.router.add_get('/api/achievements/{user_id}', handle_achievemen
 cors.add(web_app.router.add_post('/api/transfer', handle_transfer))
 cors.add(web_app.router.add_post('/api/create-table', handle_create_table))
 cors.add(web_app.router.add_get('/api/games', handle_games))
+cors.add(web_app.router.add_post('/api/game-bet', handle_game_bet))
+cors.add(web_app.router.add_post('/api/game-win', handle_game_win))
 cors.add(web_app.router.add_get('/', handle_health))
 cors.add(web_app.router.add_get('/health', handle_health))
 
