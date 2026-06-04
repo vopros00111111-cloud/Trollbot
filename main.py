@@ -1973,6 +1973,29 @@ async def handle_games(request):
         {'id': 'blackjack', 'name': 'Блэкджек', 'description': '21 очко', 'icon': '🎴'}
     ]
     return web.json_response(games)
+async def handle_game_bet(request):
+    """POST /api/game-bet - Списать ставку"""
+    data = await request.json()
+    user_id = data['user_id']
+    amount = data['amount']
+    game = data['game']
+    
+    success, new_balance = await deduct_balance(user_id, amount)
+    if not success:
+        return web.json_response({'error': 'Недостаточно монет'}, status=400)
+    
+    await log_loss(user_id, amount, game)
+    return web.json_response({'success': True, 'balance': new_balance})
+
+async def handle_game_win(request):
+    """POST /api/game-win - Начислить выигрыш"""
+    data = await request.json()
+    user_id = data['user_id']
+    amount = data['amount']
+    game = data['game']
+    
+    new_balance = await add_winnings(user_id, amount, amount, game)
+    return web.json_response({'success': True, 'balance': new_balance})
 async def handle_health(request):
     """Простая страница, чтобы Render не засыпал"""
     return web.Response(text="Trollcoin Bot is running!")
