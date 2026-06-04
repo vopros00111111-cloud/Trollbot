@@ -1925,18 +1925,37 @@ async def handle_create_table(request):
     data = await request.json()
     # Здесь потом добавишь реальную логику создания стола
     return web.json_response({'success': True, 'message': 'Стол создан'})
+async def handle_health(request):
+    """Простая страница, чтобы Render не засыпал"""
+    return web.Response(text="Trollcoin Bot is running!")
 
-# Создаем веб-приложение
+# ============================================
+# СОЗДАЁМ ВЕБ-ПРИЛОЖЕНИЕ
+# ============================================
 web_app = web.Application()
-web_app.router.add_get('/api/balance/{user_id}', handle_balance)
-web_app.router.add_get('/api/stats/{user_id}', handle_stats)
-web_app.router.add_get('/api/top', handle_top)
-web_app.router.add_get('/api/catalog', handle_catalog)
-web_app.router.add_get('/api/achievements/{user_id}', handle_achievements)
-web_app.router.add_post('/api/transfer', handle_transfer)
-web_app.router.add_post('/api/create-table', handle_create_table)
 
-import os
+# Настраиваем CORS (чтобы GitHub Pages мог обращаться к Render)
+from aiohttp_cors import setup as cors_setup, ResourceOptions
+
+cors = cors_setup(web_app, defaults={
+    "*": ResourceOptions(
+        allow_credentials=True,
+        expose_headers="*",
+        allow_headers="*",
+        allow_methods=["GET", "POST", "OPTIONS"]
+    )
+})
+
+# Добавляем ВСЕ роуты через cors.add()
+cors.add(web_app.router.add_get('/api/balance/{user_id}', handle_balance))
+cors.add(web_app.router.add_get('/api/stats/{user_id}', handle_stats))
+cors.add(web_app.router.add_get('/api/top', handle_top))
+cors.add(web_app.router.add_get('/api/catalog', handle_catalog))
+cors.add(web_app.router.add_get('/api/achievements/{user_id}', handle_achievements))
+cors.add(web_app.router.add_post('/api/transfer', handle_transfer))
+cors.add(web_app.router.add_post('/api/create-table', handle_create_table))
+cors.add(web_app.router.add_get('/', handle_health))
+cors.add(web_app.router.add_get('/health', handle_health))
 
 async def start_web_server():
     port = int(os.environ.get("PORT", 10000))
