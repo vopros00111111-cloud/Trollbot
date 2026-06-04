@@ -1842,9 +1842,111 @@ async def _poker_finish(game: dict):
             await bot.send_message(p["user_id"], f"🃏 Игра окончена!\n{win_text}", parse_mode="Markdown")
         except Exception:
             pass    
+# ============================================
+# WEB API СЕРВЕР (для Telegram WebApp)
+# ============================================
+from aiohttp import web
+
+async def handle_balance(request):
+    """GET /api/balance/{user_id}"""
+    user_id = int(request.match_info['user_id'])
+    data = await get_user_data(user_id)
+    if data:
+        return web.json_response({'balance': data['balance']})
+    return web.json_response({'error': 'User not found'}, status=404)
+
+async def handle_stats(request):
+    """GET /api/stats/{user_id}"""
+    user_id = int(request.match_info['user_id'])
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow('SELECT wins, losses, total_games FROM stats WHERE user_id = $1', user_id)
+    if row:
+        return web.json_response({
+            'wins': row['wins'],
+            'losses': row['losses'],
+            'totalGames': row['total_games']
+        })
+    return web.json_response({'wins': 0, 'losses': 0, 'totalGames': 0})
+
+async def handle_top(request):
+    """GET /api/top?limit=10"""
+    limit = int(request.query.get('limit', 10))
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(
+            'SELECT username, balance FROM users WHERE balance > 0 ORDER BY balance DESC LIMIT $1',
+            limit
+        )
+    top = [{'username': r['username'], 'balance': r['balance']} for r in rows]
+    return web.json_response(top)
+
+async def handle_catalog(request):
+    """GET /api/catalog"""
+    catalog = [
+        {'id': 1, 'name': 'Бустер удачи', 'description': '+10% к выигрышу', 'price': 500, 'icon': '🎁'},
+        {'id': 2, 'name': 'VIP статус', 'description': 'Эксклюзивные возможности', 'price': 5000, 'icon': '⭐'}
+    ]
+    return web.json_response(catalog)
+
+async def handle_achievements(request):
+    """GET /api/achievements/{user_id}"""
+    return web.json_response(['🏆 Первый выигрыш', '💰 Богач'])
+
+async def handle_transfer(request):    """POST /api/transfer"""
+    data = await request.json()
+    from_id = data['from_id']
+    to_username = data['to_username'].replace('@', '')
+    amount = data['amount']
+    comment = data.get('comment', '')
     
+    from_data = await get_user_data(from_id)
+    if not from_data or from_data['balance'] < amount:
+        return web.json_response({'error': 'Недостаточно монет'}, status=400)
+    
+    async with pool.acquire() as conn:
+        to_user = await conn.fetchrow('SELECT user_id FROM users WHERE username = $1', to_username)
+    
+    if not to_user:
+        return web.json_response({'error': 'Пользователь не найден'}, status=404)
+    
+    await deduct_balance(from_id, amount)
+    await add_winnings(to_user['user_id'], amount, amount, 'transfer')
+    
+    try:
+        await bot.send_message(to_user['user_id'], f'💸 Тебе перевели {amount} монет\n📝 {comment}')
+    except:
+        pass
+    
+    return web.json_response({'success': True})
+
+async def handle_create_table(request):
+    """POST /api/create-table"""
+    data = await request.json()
+    # Здесь потом добавишь реальную логику создания стола
+    return web.json_response({'success': True, 'message': 'Стол создан'})
+
+# Создаем веб-приложение
+web_app = web.Application()
+web_app.router.add_get('/api/balance/{user_id}', handle_balance)
+web_app.router.add_get('/api/stats/{user_id}', handle_stats)
+web_app.router.add_get('/api/top', handle_top)
+web_app.router.add_get('/api/catalog', handle_catalog)
+web_app.router.add_get('/api/achievements/{user_id}', handle_achievements)
+web_app.router.add_post('/api/transfer', handle_transfer)
+web_app.router.add_post('/api/create-table', handle_create_table)
+
+async def start_web_server():
+    """Запускаем веб-сервер на порту 8080"""
+    runner = web.AppRunner(web_app)
+    await runner.setup()
+    site = web.TCPSite(runner, '0.0.0.0', 8080)
+    await site.start()
+    print("✅ Web API server started on port 8080")
+# ============================================
+# ОСНОВНАЯ ФУНКЦИЯ
+# ============================================    
 async def main():
     await init_db()
+    await start_web_server()  # <-- ДОБАВИТЬ ЭТУ СТРОКУ
     logger.info("🤖 Запущен с PostgreSQL")
     await dp.start_polling(bot)
 
