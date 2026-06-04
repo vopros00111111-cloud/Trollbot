@@ -1951,10 +1951,23 @@ web_app.router.add_post('/api/transfer', handle_transfer)
 web_app.router.add_post('/api/create-table', handle_create_table)
 
 import os
+import socket
 
 async def start_web_server():
-    """Запускаем веб-сервер на порту из переменной окружения"""
-    port = int(os.environ.get("PORT", 8080))
+    """Запускаем веб-сервер, находя свободный порт"""
+    # Render даёт порт через переменную окружения
+    port = int(os.environ.get("PORT", 10000))
+    
+    # Проверяем свободен ли порт
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    try:
+        sock.bind(('0.0.0.0', port))
+        sock.close()
+    except OSError:
+        # Порт занят, используем другой
+        port = 8080
+        print(f"⚠️ Порт {os.environ.get('PORT')} занят, используем {port}")
+    
     runner = web.AppRunner(web_app)
     await runner.setup()
     site = web.TCPSite(runner, '0.0.0.0', port)
