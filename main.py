@@ -281,9 +281,14 @@ async def handle_webapp_data(message: Message):
             )
             
             try:
+                м
+                logging.info(f"📤 Отправка приглашения в chat_id={chat_id}")
                 await bot.send_message(chat_id, invite_text, parse_mode="Markdown")
+                logging.info(f"✅ Приглашение успешно отправлено!")
             except Exception as e:
-                logging.error(f"Не удалось отправить приглашение: {e}")
+                logging.error(f"❌ Не удалось отправить приглашение: {e}")
+                logging.error(f"   chat_id={chat_id}, user_id={user_id}")
+                logging.error(f"   chat_info={chat_info}")
             
             await message.answer("✅ Стол создан! Приглашение отправлено в чат.")
             await loadBalance()  # Обновляем баланс в Web App
