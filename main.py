@@ -196,7 +196,6 @@ from aiogram.types import WebAppInfo, InlineKeyboardMarkup, InlineKeyboardButton
 
 # Глобальный словарь для хранения chat_id пользователей
 user_chat_context = {}  # {user_id: {"chat_id": 123, "username": "..."}}
-
 @dp.message(Command("app", "играть"))
 async def cmd_open_app(message: Message):
     # Ссылка на твой GitHub Pages
@@ -208,9 +207,8 @@ async def cmd_open_app(message: Message):
         "username": message.from_user.username or "unknown"
     }
     
-    # 🔹 ПРОВЕРКА: если это группа/супергруппа — предупреждаем
+    # 🔹 ПРОВЕРКА: если это группа/супергруппа — отправляем в ЛС
     if message.chat.type in ["group", "supergroup"]:
-        # Отправляем кнопку в ЛС пользователю
         try:
             await bot.send_message(
                 message.from_user.id,
@@ -231,7 +229,7 @@ async def cmd_open_app(message: Message):
         await message.answer(
             "🚀 Нажми на кнопку ниже, чтобы открыть приложение!", 
             reply_markup=keyboard
-        )
+    )
 @dp.message(F.web_app_data)
 async def handle_webapp_data(message: Message):
     """Получаем данные из Web App"""
@@ -242,8 +240,8 @@ async def handle_webapp_data(message: Message):
         if data.get('action') == 'create_poker_table':
             # Получаем chat_id из контекста
             chat_info = user_chat_context.get(user_id, {})
-            chat_id = chat_info.get('chat_id', message.chat.id)
-            
+            chat_id = chat_info.get('chat_id', message.chat.id)  # Если не найден контекст — используем текущий чат
+    
             bet = int(data.get('bet', 100))
             max_players = int(data.get('max_players', 2))
             
@@ -2199,6 +2197,7 @@ cors.add(web_app.router.add_post('/api/create-table', handle_create_table))
 cors.add(web_app.router.add_get('/api/games', handle_games))
 cors.add(web_app.router.add_post('/api/game-bet', handle_game_bet))
 cors.add(web_app.router.add_post('/api/game-win', handle_game_win))
+# 🔹 ДОБАВЬ ЭТИ ДВЕ СТРОКИ:
 cors.add(web_app.router.add_post('/api/poker/create', handle_create_poker_table))
 cors.add(web_app.router.add_post('/api/poker/join', handle_join_poker_table))
 cors.add(web_app.router.add_get('/', handle_health))
