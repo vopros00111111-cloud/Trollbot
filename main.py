@@ -26,7 +26,6 @@ dp = Dispatcher()
 
 # Глобальный пул соединений
 pool = None
-user_chat_context = {}  # {user_id: {"chat_id": 123, "username": "..."}}
 
 # 🔹 Словарь для хранения активных таймеров
 active_timers = {}
@@ -195,6 +194,9 @@ async def cmd_start(message: Message):
     await message.answer(text, parse_mode="Markdown")
 from aiogram.types import WebAppInfo, InlineKeyboardMarkup, InlineKeyboardButton
 
+# Глобальный словарь для хранения chat_id пользователей
+user_chat_context = {}  # {user_id: {"chat_id": 123, "username": "..."}}
+
 @dp.message(Command("app", "играть"))
 async def cmd_open_app(message: Message):
     # Ссылка на твой GitHub Pages
@@ -206,15 +208,30 @@ async def cmd_open_app(message: Message):
         "username": message.from_user.username or "unknown"
     }
     
-    # Создаем кнопку WebApp
-    keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🎮 Открыть BlessCoin", web_app=WebAppInfo(url=webapp_url))]
-    ])
-
-    await message.answer(
-        "🚀 Нажми на кнопку ниже, чтобы открыть приложение!", 
-        reply_markup=keyboard
-    )
+    # 🔹 ПРОВЕРКА: если это группа/супергруппа — предупреждаем
+    if message.chat.type in ["group", "supergroup"]:
+        # Отправляем кнопку в ЛС пользователю
+        try:
+            await bot.send_message(
+                message.from_user.id,
+                "🚀 Нажми на кнопку чтобы открыть приложение!",
+                reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                    [InlineKeyboardButton(text="🎮 Открыть BlessCoin", web_app=WebAppInfo(url=webapp_url))]
+                ])
+            )
+            await message.answer("📩 Отправил ссылку в личные сообщения!")
+        except Exception as e:
+            await message.answer(f"❌ Ошибка: {e}\n\nНапишите боту в ЛС: @{(await bot.get_me()).username}")
+    else:
+        # В ЛС отправляем напрямую
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="🎮 Открыть BlessCoin", web_app=WebAppInfo(url=webapp_url))]
+        ])
+        
+        await message.answer(
+            "🚀 Нажми на кнопку ниже, чтобы открыть приложение!", 
+            reply_markup=keyboard
+        )
 @dp.message(F.web_app_data)
 async def handle_webapp_data(message: Message):
     """Получаем данные из Web App"""
@@ -2079,7 +2096,7 @@ async def handle_create_poker_table(request):
     
     # 🔹 Получаем chat_id из контекста
     chat_info = user_chat_context.get(user_id, {})
-    chat_id = chat_info.get('chat_id', 0)  # 0 = ЛС если не найден контекст
+    chat_id = chat_info.get('chat_id', 0)
     
     # Проверяем баланс
     success, _ = await deduct_balance(user_id, bet)
@@ -2145,10 +2162,8 @@ async def handle_join_poker_table(request):
     
     table['players'].append({'user_id': user_id})
     
-    # Если стол заполнен — начинаем игру
     if len(table['players']) >= 2:
         table['status'] = 'started'
-        # TODO: Здесь логика начала игры
         return web.json_response({'success': True, 'game_started': True})
     
     return web.json_response({'success': True, 'game_started': False})
