@@ -201,10 +201,10 @@ user_chat_context = {}  # {user_id: {"chat_id": 123, "message_id": 456}}
 async def cmd_open_app(message: Message):
     webapp_url = "https://vopros00111111-cloud.github.io/Trollbotapp/"
     
-    # Сохраняем контекст чата
+    # 🔹 СОХРАНЯЕМ КОНТЕКСТ ЧАТА
     user_chat_context[message.from_user.id] = {
         "chat_id": message.chat.id,
-        "message_id": message.message_id
+        "username": message.from_user.username
     }
     
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
@@ -215,6 +215,68 @@ async def cmd_open_app(message: Message):
         "🚀 Нажми на кнопку ниже, чтобы открыть приложение!", 
         reply_markup=keyboard
     )
+@dp.message(F.web_app_data)
+async def handle_webapp_data(message: Message):
+    """Получаем данные из Web App"""
+    try:
+        data = json.loads(message.web_app_data.data)
+        user_id = message.from_user.id
+        
+        if data.get('action') == 'create_poker_table':
+            # Получаем chat_id из контекста
+            chat_info = user_chat_context.get(user_id, {})
+            chat_id = chat_info.get('chat_id', message.chat.id)
+            
+            bet = int(data.get('bet', 100))
+            max_players = int(data.get('max_players', 2))
+            
+            # Проверяем баланс
+            async with pool.acquire() as conn:
+                row = await conn.fetchrow('SELECT balance FROM users WHERE user_id = $1', user_id)
+                if not row or row['balance'] < bet:
+                    return await message.answer("❌ Недостаточно монет!")
+            
+            # Списываем ставку
+            await deduct_balance(user_id, bet)
+            
+            # Генерируем ID стола
+            game_uuid = str(uuid.uuid4())[:8]
+            
+            # Создаём игру
+            active_poker_games[game_uuid] = {
+                "uuid": game_uuid,
+                "host": user_id,
+                "host_name": message.from_user.username,
+                "bet": bet,
+                "max_players": max_players,
+                "players": [{"user_id": user_id, "username": message.from_user.username}],
+                "chat_id": chat_id,
+                "expires_at": time.time() + 60,
+                "msg_id": message.message_id,
+                "status": "waiting"
+            }
+            
+            # Отправляем приглашение в чат
+            invite_text = (
+                f"🃏 **ПОКЕРНЫЙ СТОЛ**\n\n"
+                f"👤 @{message.from_user.username} создал стол!\n"
+                f"💰 Ставка: **{bet}** монет\n"
+                f"👥 Игроков: **1/{max_players}**\n\n"
+                f"Напишите `/app` чтобы присоединиться!"
+            )
+            
+            try:
+                await bot.send_message(chat_id, invite_text, parse_mode="Markdown")
+            except Exception as e:
+                logging.error(f"Не удалось отправить приглашение: {e}")
+            
+            await message.answer("✅ Стол создан! Приглашение отправлено в чат.")
+            await loadBalance()  # Обновляем баланс в Web App
+            
+    except json.JSONDecodeError:
+        pass
+    except Exception as e:
+        logging.error(f"Ошибка обработки WebApp данных: {e}")
 @dp.message(Command("history", "logs", "история"))
 async def cmd_history(message: Message):
     if not await check_admin(message.from_user.id):
