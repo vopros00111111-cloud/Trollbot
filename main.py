@@ -237,7 +237,7 @@ async def handle_webapp_data(message: Message):
         data = json.loads(message.web_app_data.data)
         user_id = message.from_user.id
         
-        if data.get('action') == 'create_poker_table':
+        if data.get('action') == 'create_table' and data.get('game') == 'poker':
             # Получаем chat_id из контекста
             chat_info = user_chat_context.get(user_id, {})
             chat_id = chat_info.get('chat_id', message.chat.id)  # Если не найден контекст — используем текущий чат
