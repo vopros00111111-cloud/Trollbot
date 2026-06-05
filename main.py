@@ -194,20 +194,27 @@ async def cmd_start(message: Message):
     await message.answer(text, parse_mode="Markdown")
 from aiogram.types import WebAppInfo, InlineKeyboardMarkup, InlineKeyboardButton
 
+# Глобальный словарь для хранения chat_id
+user_chat_context = {}  # {user_id: {"chat_id": 123, "message_id": 456}}
+
 @dp.message(Command("app", "играть"))
 async def cmd_open_app(message: Message):
-    # Ссылка на твой GitHub Pages
     webapp_url = "https://vopros00111111-cloud.github.io/Trollbotapp/"
     
-    # Создаем кнопку WebApp
+    # Сохраняем контекст чата
+    user_chat_context[message.from_user.id] = {
+        "chat_id": message.chat.id,
+        "message_id": message.message_id
+    }
+    
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🎮 Открыть BlessCoin", web_app=WebAppInfo(url=webapp_url))]
     ])
-    
+
     await message.answer(
         "🚀 Нажми на кнопку ниже, чтобы открыть приложение!", 
         reply_markup=keyboard
-)
+    )
 @dp.message(Command("history", "logs", "история"))
 async def cmd_history(message: Message):
     if not await check_admin(message.from_user.id):
@@ -1997,6 +2004,83 @@ async def handle_game_win(request):
     
     new_balance = await add_winnings(user_id, amount, amount, game)
     return web.json_response({'success': True, 'balance': new_balance})
+# Хранилище активных покер-столов
+poker_tables = {}  # {table_id: {...}}
+
+async def handle_create_poker_table(request):
+    """POST /api/poker/create"""
+    data = await request.json()
+    user_id = data['user_id']
+    bet = data['bet']
+    max_players = data.get('max_players', 2)
+    
+    # Получаем chat_id из контекста
+    chat_info = user_chat_context.get(user_id, {})
+    chat_id = chat_info.get('chat_id', 0)  # 0 = ЛС
+    
+    # Проверяем баланс
+    success, _ = await deduct_balance(user_id, bet)
+    if not success:
+        return web.json_response({'error': 'Недостаточно монет'}, status=400)
+    
+    # Создаём стол
+    table_id = str(uuid.uuid4())[:8]
+    poker_tables[table_id] = {
+        'host': user_id,
+        'bet': bet,
+        'max_players': max_players,
+        'players': [{'user_id': user_id}],
+        'chat_id': chat_id,
+        'status': 'waiting',
+        'created_at': time.time()
+    }
+    
+    # Отправляем приглашение в чат
+    try:
+        invite_text = (
+            f"🃏 **ПОКЕРНЫЙ СТОЛ**\n\n"
+            f"👤 Игрок создал стол!\n"
+            f"💰 Ставка: **{bet}** монет\n"
+            f"👥 Игроков: **1/{max_players}**\n\n"
+            f"Откройте Web App чтобы присоединиться!"
+        )
+        await bot.send_message(chat_id, invite_text, parse_mode="Markdown")
+    except Exception as e:
+        logging.error(f"Не удалось отправить приглашение: {e}")
+    
+    return web.json_response({'success': True, 'table_id': table_id})
+
+async def handle_join_poker_table(request):
+    """POST /api/poker/join"""
+    data = await request.json()
+    user_id = data['user_id']
+    table_id = data['table_id']
+    
+    if table_id not in poker_tables:
+        return web.json_response({'error': 'Стол не найден'}, status=404)
+    
+    table = poker_tables[table_id]
+    
+    if table['status'] != 'waiting':
+        return web.json_response({'error': 'Игра уже началась'}, status=400)
+    
+    if len(table['players']) >= table['max_players']:
+        return web.json_response({'error': 'Стол заполнен'}, status=400)
+    
+    # Проверяем баланс
+    success, _ = await deduct_balance(user_id, table['bet'])
+    if not success:
+        return web.json_response({'error': 'Недостаточно монет'}, status=400)
+    
+    table['players'].append({'user_id': user_id})
+    
+    # Если стол заполнен — начинаем игру
+    if len(table['players']) >= 2:
+        table['status'] = 'started'
+        # TODO: Здесь логика начала игры
+        return web.json_response({'success': True, 'game_started': True})
+    
+    return web.json_response({'success': True, 'game_started': False})
 async def handle_health(request):
     """Простая страница, чтобы Render не засыпал"""
     return web.Response(text="Trollcoin Bot is running!")
@@ -2029,6 +2113,8 @@ cors.add(web_app.router.add_post('/api/create-table', handle_create_table))
 cors.add(web_app.router.add_get('/api/games', handle_games))
 cors.add(web_app.router.add_post('/api/game-bet', handle_game_bet))
 cors.add(web_app.router.add_post('/api/game-win', handle_game_win))
+cors.add(web_app.router.add_post('/api/poker/create', handle_create_poker_table))
+cors.add(web_app.router.add_post('/api/poker/join', handle_join_poker_table))
 cors.add(web_app.router.add_get('/', handle_health))
 cors.add(web_app.router.add_get('/health', handle_health))
 
