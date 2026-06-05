@@ -2029,10 +2029,15 @@ async def handle_create_poker_table(request):
     user_id = data['user_id']
     bet = data['bet']
     max_players = data.get('max_players', 2)
+    # 🔹 Получаем chat_id из запроса ИЛИ из контекста
+    chat_id = data.get('chat_id', 0)
     
-    # 🔹 Получаем chat_id из контекста
-    chat_info = user_chat_context.get(user_id, {})
-    chat_id = chat_info.get('chat_id', 0)
+    # Если chat_id = 0, пробуем получить из контекста
+    if chat_id == 0:
+        chat_info = user_chat_context.get(user_id, {})
+        chat_id = chat_info.get('chat_id', 0)
+    
+    # ... остальной код без изменений
     
     # Проверяем баланс
     success, _ = await deduct_balance(user_id, bet)
