@@ -195,7 +195,8 @@ async def cmd_start(message: Message):
 from aiogram.types import WebAppInfo, InlineKeyboardMarkup, InlineKeyboardButton
 
 # Глобальный словарь для хранения chat_id
-user_chat_context = {}  # {user_id: {"chat_id": 123, "message_id": 456}}
+# Глобальный словарь для хранения chat_id
+user_chat_context = {}  # {user_id: {"chat_id": 123, "username": "..."}}
 
 @dp.message(Command("app", "играть"))
 async def cmd_open_app(message: Message):
@@ -2078,7 +2079,7 @@ async def handle_create_poker_table(request):
     
     # Получаем chat_id из контекста
     chat_info = user_chat_context.get(user_id, {})
-    chat_id = chat_info.get('chat_id', 0)  # 0 = ЛС
+    chat_id = chat_info.get('chat_id', 0)
     
     # Проверяем баланс
     success, _ = await deduct_balance(user_id, bet)
@@ -2097,16 +2098,23 @@ async def handle_create_poker_table(request):
         'created_at': time.time()
     }
     
-    # Отправляем приглашение в чат
+    # 🔹 ОТПРАВЛЯЕМ ПРИГЛАШЕНИЕ С КНОПКОЙ
+    webapp_url = "https://vopros00111111-cloud.github.io/Trollbotapp/"
+    
+    invite_text = (
+        f"🃏 **ПОКЕРНЫЙ СТОЛ**\n\n"
+        f"👤 Игрок создал стол!\n"
+        f"💰 Ставка: **{bet}** монет\n"
+        f"👥 Игроков: **1/{max_players}**\n\n"
+        f"Нажмите кнопку чтобы присоединиться!"
+    )
+    
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🎮 Открыть покер", web_app=WebAppInfo(url=webapp_url))]
+    ])
+    
     try:
-        invite_text = (
-            f"🃏 **ПОКЕРНЫЙ СТОЛ**\n\n"
-            f"👤 Игрок создал стол!\n"
-            f"💰 Ставка: **{bet}** монет\n"
-            f"👥 Игроков: **1/{max_players}**\n\n"
-            f"Откройте Web App чтобы присоединиться!"
-        )
-        await bot.send_message(chat_id, invite_text, parse_mode="Markdown")
+        await bot.send_message(chat_id, invite_text, reply_markup=keyboard, parse_mode="Markdown")
     except Exception as e:
         logging.error(f"Не удалось отправить приглашение: {e}")
     
