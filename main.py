@@ -26,6 +26,7 @@ dp = Dispatcher()
 
 # Глобальный пул соединений
 pool = None
+user_chat_context = {}  # {user_id: {"chat_id": 123, "username": "..."}}
 
 # 🔹 Словарь для хранения активных таймеров
 active_timers = {}
@@ -194,20 +195,18 @@ async def cmd_start(message: Message):
     await message.answer(text, parse_mode="Markdown")
 from aiogram.types import WebAppInfo, InlineKeyboardMarkup, InlineKeyboardButton
 
-# Глобальный словарь для хранения chat_id
-# Глобальный словарь для хранения chat_id
-user_chat_context = {}  # {user_id: {"chat_id": 123, "username": "..."}}
-
 @dp.message(Command("app", "играть"))
 async def cmd_open_app(message: Message):
+    # Ссылка на твой GitHub Pages
     webapp_url = "https://vopros00111111-cloud.github.io/Trollbotapp/"
     
     # 🔹 СОХРАНЯЕМ КОНТЕКСТ ЧАТА
     user_chat_context[message.from_user.id] = {
         "chat_id": message.chat.id,
-        "username": message.from_user.username
+        "username": message.from_user.username or "unknown"
     }
     
+    # Создаем кнопку WebApp
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🎮 Открыть BlessCoin", web_app=WebAppInfo(url=webapp_url))]
     ])
@@ -2067,6 +2066,7 @@ async def handle_game_win(request):
     
     new_balance = await add_winnings(user_id, amount, amount, game)
     return web.json_response({'success': True, 'balance': new_balance})
+
 # Хранилище активных покер-столов
 poker_tables = {}  # {table_id: {...}}
 
@@ -2077,9 +2077,9 @@ async def handle_create_poker_table(request):
     bet = data['bet']
     max_players = data.get('max_players', 2)
     
-    # Получаем chat_id из контекста
+    # 🔹 Получаем chat_id из контекста
     chat_info = user_chat_context.get(user_id, {})
-    chat_id = chat_info.get('chat_id', 0)
+    chat_id = chat_info.get('chat_id', 0)  # 0 = ЛС если не найден контекст
     
     # Проверяем баланс
     success, _ = await deduct_balance(user_id, bet)
@@ -2098,7 +2098,7 @@ async def handle_create_poker_table(request):
         'created_at': time.time()
     }
     
-    # 🔹 ОТПРАВЛЯЕМ ПРИГЛАШЕНИЕ С КНОПКОЙ
+    # 🔹 ОТПРАВЛЯЕМ ПРИГЛАШЕНИЕ В ЧАТ
     webapp_url = "https://vopros00111111-cloud.github.io/Trollbotapp/"
     
     invite_text = (
@@ -2115,8 +2115,9 @@ async def handle_create_poker_table(request):
     
     try:
         await bot.send_message(chat_id, invite_text, reply_markup=keyboard, parse_mode="Markdown")
+        logging.info(f"✅ Приглашение отправлено в чат {chat_id}")
     except Exception as e:
-        logging.error(f"Не удалось отправить приглашение: {e}")
+        logging.error(f"❌ Не удалось отправить приглашение: {e}")
     
     return web.json_response({'success': True, 'table_id': table_id})
 
