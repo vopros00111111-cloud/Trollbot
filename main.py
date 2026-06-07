@@ -2306,37 +2306,48 @@ async def handle_create_poker_table(request):
         'created_at': time.time()
     }
 
-    # 🔹 ОТПРАВЛЯЕМ ПРИГЛАШЕНИЕ
-    webapp_url = "https://vopros00111111-cloud.github.io/Trollbotapp/"
+    # 🔹 ОТПРАВЛЯЕМ ПРИГЛАШЕНИЕ В ЧАТ
+webapp_url = "https://vopros00111111-cloud.github.io/Trollbotapp/"
 
-    invite_text = (
-        f"🃏 **ПОКЕРНЫЙ СТОЛ**\n\n"
-        f"👤 Игрок создал стол!\n"
-        f"💰 Ставка: **{bet}** монет\n"
-        f"👥 Игроков: **1/{max_players}**\n\n"
-        f"Нажмите кнопку чтобы присоединиться!"
-    )
+invite_text = (
+    f"🃏 **ПОКЕРНЫЙ СТОЛ**\n\n"
+    f"👤 Игрок создал стол!\n"
+    f"💰 Ставка: **{bet}** монет\n"
+    f"👥 Игроков: **1/{max_players}**\n\n"
+    f"Нажмите кнопку чтобы присоединиться!"
+)
 
-    keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🎮 Открыть покер", web_app=WebAppInfo(url=webapp_url))]
-    ])
+# 🔹 ИСПРАВЛЕНИЕ: используем URL вместо web_app для групповых чатов
+keyboard = InlineKeyboardMarkup(inline_keyboard=[
+    [InlineKeyboardButton(text="🎮 Открыть покер", url=webapp_url)]
+])
 
-    sent = False
-    try:
-        await bot.send_message(chat_id, invite_text, reply_markup=keyboard, parse_mode="Markdown")
-        sent = True
-        logging.info(f"✅ Приглашение отправлено в чат {chat_id}")
-    except Exception as e:
-        logging.error(f"❌ Не удалось отправить в чат {chat_id}: {e}")
-        # Фолбэк: если не вышло в чат — пробуем в ЛС создателю
-        if chat_id != user_id:
-            try:
-                await bot.send_message(user_id, invite_text, reply_markup=keyboard, parse_mode="Markdown")
-                sent = True
-                logging.info(f"✅ Приглашение отправлено в ЛС {user_id} (фолбэк)")
-            except Exception as e2:
-                logging.error(f"❌ Не удалось отправить в ЛС {user_id}: {e2}")
+sent = False
+try:
+    await bot.send_message(chat_id, invite_text, reply_markup=keyboard, parse_mode="Markdown")
+    sent = True
+    logging.info(f"✅ Приглашение отправлено в чат {chat_id}")
+except Exception as e:
+    logging.error(f"❌ Не удалось отправить в чат {chat_id}: {e}")
+    # Фолбэк: если не вышло в чат — пробуем в ЛС создателю
+    if chat_id != user_id:
+        try:
+            # В ЛС можно использовать web_app
+            keyboard_ls = InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="🎮 Открыть покер", web_app=WebAppInfo(url=webapp_url))]
+            ])
+            await bot.send_message(user_id, invite_text, reply_markup=keyboard_ls, parse_mode="Markdown")
+            sent = True
+            logging.info(f"✅ Приглашение отправлено в ЛС {user_id} (фолбэк)")
+        except Exception as e2:
+            logging.error(f"❌ Не удалось отправить в ЛС {user_id}: {e2}")
 
+if not sent:
+    # Возвращаем деньги если не смогли отправить приглашение
+    await add_balance(user_id, bet)
+    return web.json_response({'error': 'Не удалось отправить приглашение. Убедитесь что бот добавлен в чат.'}, status=500)
+
+return web.json_response({'success': True, 'table_id': table_id})
     if not sent:
         # Возвращаем деньги если не смогли отправить приглашение
         await add_balance(user_id, bet)
