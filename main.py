@@ -1890,15 +1890,26 @@ from aiohttp import web
 async def handle_balance(request):
     """GET /api/balance/{user_id}"""
     user_id = int(request.match_info['user_id'])
+    
+    # Проверяем, есть ли пользователь. Если нет — создаем автоматически!
     data = await get_user_data(user_id)
+    if not data:
+        await register_user(user_id, f"user_{user_id}")
+        data = await get_user_data(user_id)
+    
     if data:
         return web.json_response({'balance': data['balance']})
-    return web.json_response({'error': 'User not found'}, status=404)
+    return web.json_response({'error': 'User not found'}, status=500)
 
 async def handle_stats(request):
     """GET /api/stats/{user_id}"""
     user_id = int(request.match_info['user_id'])
     
+    # То же самое: авто-регистрация, если пользователя нет
+    data = await get_user_data(user_id)
+    if not data:
+        await register_user(user_id, f"user_{user_id}")
+
     async with pool.acquire() as conn:
         # Место в топе
         rank = await conn.fetchval(
@@ -1917,7 +1928,7 @@ async def handle_stats(request):
             "SELECT COALESCE(SUM(amount), 0) FROM transactions WHERE receiver_id = $1 AND type LIKE '%_win'",
             user_id
         ) or 0
-    
+
     return web.json_response({
         'rank': rank,
         'totalGames': total_games,
