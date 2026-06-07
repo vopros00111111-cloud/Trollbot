@@ -200,36 +200,21 @@ user_chat_context = {}  # {user_id: {"chat_id": 123, "username": "..."}}
 async def cmd_open_app(message: Message):
     webapp_url = "https://vopros00111111-cloud.github.io/Trollbotapp/"
     
-    # 🔹 КЛЮЧЕВОЕ ИЗМЕНЕНИЕ: Сохраняем chat_id ГРУППЫ даже если уводим в ЛС
-    real_chat_id = message.chat.id
-    
+    # 🔹 Сохраняем chat_id именно этого чата (для покера и других фич)
     user_chat_context[message.from_user.id] = {
-        "chat_id": real_chat_id,  # ← Сохраняем именно чат, где написали /app
+        "chat_id": message.chat.id,
         "username": message.from_user.username or "unknown"
     }
 
-    # 🔹 Если это группа/супергруппа — отправляем кнопку в ЛС
-    if message.chat.type in ["group", "supergroup"]:
-        try:
-            await bot.send_message(
-                message.from_user.id,
-                "🚀 Нажми на кнопку чтобы открыть приложение!",
-                reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-                    [InlineKeyboardButton(text="🎮 Открыть BlessCoin", web_app=WebAppInfo(url=webapp_url))]
-                ])
-            )
-            await message.answer("📩 Отправил ссылку в личные сообщения!")
-        except Exception as e:
-            await message.answer(f"❌ Ошибка: {e}\n\nНапишите боту в ЛС: @{(await bot.get_me()).username}")
-    else:
-        # В ЛС отправляем напрямую
-        keyboard = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="🎮 Открыть BlessCoin", web_app=WebAppInfo(url=webapp_url))]
-        ])
-        await message.answer(
-            "🚀 Нажми на кнопку ниже, чтобы открыть приложение!", 
-            reply_markup=keyboard
-        )
+    # 🔹 Отправляем кнопку прямо в текущий чат (без перенаправления в ЛС)
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🎮 Открыть BlessCoin", web_app=WebAppInfo(url=webapp_url))]
+    ])
+    
+    await message.answer(
+        "🚀 Нажми на кнопку ниже, чтобы открыть приложение!", 
+        reply_markup=keyboard
+    )
 @dp.message(Command("history", "logs", "история"))
 async def cmd_history(message: Message):
     if not await check_admin(message.from_user.id):
