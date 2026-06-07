@@ -2387,6 +2387,11 @@ cors.add(web_app.router.add_post('/api/game-win', handle_game_win))
 # 🔹 ДОБАВЬ ЭТИ ДВЕ СТРОКИ:
 cors.add(web_app.router.add_post('/api/poker/create', handle_create_poker_table))
 cors.add(web_app.router.add_post('/api/poker/join', handle_join_poker_table))
+cors.add(web_app.router.add_post('/api/game/slots', handle_play_slots))
+cors.add(web_app.router.add_post('/api/game/roulette', handle_play_roulette))
+cors.add(web_app.router.add_post('/api/game/blackjack/start', handle_blackjack_start))
+cors.add(web_app.router.add_post('/api/game/blackjack/hit', handle_blackjack_hit))
+cors.add(web_app.router.add_post('/api/game/blackjack/stand', handle_blackjack_stand))
 cors.add(web_app.router.add_get('/', handle_health))
 cors.add(web_app.router.add_get('/health', handle_health))
 
