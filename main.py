@@ -2348,12 +2348,6 @@ if not sent:
     return web.json_response({'error': 'Не удалось отправить приглашение. Убедитесь что бот добавлен в чат.'}, status=500)
 
 return web.json_response({'success': True, 'table_id': table_id})
-    if not sent:
-        # Возвращаем деньги если не смогли отправить приглашение
-        await add_balance(user_id, bet)
-        return web.json_response({'error': 'Не удалось отправить приглашение. Убедитесь что бот добавлен в чат.'}, status=500)
-
-    return web.json_response({'success': True, 'table_id': table_id})
 async def handle_join_poker_table(request):
     """POST /api/poker/join"""
     data = await request.json()
