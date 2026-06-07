@@ -2273,21 +2273,25 @@ async def handle_create_poker_table(request):
     user_id = data['user_id']
     bet = data['bet']
     max_players = data.get('max_players', 2)
-    # 🔹 Получаем chat_id из запроса ИЛИ из контекста
+    
+    # 🔹 ПРИОРИТЕТ: chat_id из запроса (передан из JS)
     chat_id = data.get('chat_id', 0)
     
-    # Если chat_id = 0, пробуем получить из контекста
+    # Фолбэк 1: из контекста команды /app
     if chat_id == 0:
         chat_info = user_chat_context.get(user_id, {})
         chat_id = chat_info.get('chat_id', 0)
     
-    # ... остальной код без изменений
-    
+    # Фолбэк 2: если всё ещё 0 — пытаемся отправить в ЛС создателю
+    if chat_id == 0:
+        chat_id = user_id  # Отправим приглашение в ЛС самому создателю
+        logging.warning(f"⚠️ chat_id не найден для {user_id}, отправляю в ЛС")
+
     # Проверяем баланс
     success, _ = await deduct_balance(user_id, bet)
     if not success:
         return web.json_response({'error': 'Недостаточно монет'}, status=400)
-    
+
     # Создаём стол
     table_id = str(uuid.uuid4())[:8]
     poker_tables[table_id] = {
@@ -2299,10 +2303,10 @@ async def handle_create_poker_table(request):
         'status': 'waiting',
         'created_at': time.time()
     }
-    
-    # 🔹 ОТПРАВЛЯЕМ ПРИГЛАШЕНИЕ В ЧАТ
+
+    # 🔹 ОТПРАВЛЯЕМ ПРИГЛАШЕНИЕ
     webapp_url = "https://vopros00111111-cloud.github.io/Trollbotapp/"
-    
+
     invite_text = (
         f"🃏 **ПОКЕРНЫЙ СТОЛ**\n\n"
         f"👤 Игрок создал стол!\n"
@@ -2310,19 +2314,33 @@ async def handle_create_poker_table(request):
         f"👥 Игроков: **1/{max_players}**\n\n"
         f"Нажмите кнопку чтобы присоединиться!"
     )
-    
+
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🎮 Открыть покер", web_app=WebAppInfo(url=webapp_url))]
     ])
-    
+
+    sent = False
     try:
         await bot.send_message(chat_id, invite_text, reply_markup=keyboard, parse_mode="Markdown")
+        sent = True
         logging.info(f"✅ Приглашение отправлено в чат {chat_id}")
     except Exception as e:
-        logging.error(f"❌ Не удалось отправить приглашение: {e}")
-    
-    return web.json_response({'success': True, 'table_id': table_id})
+        logging.error(f"❌ Не удалось отправить в чат {chat_id}: {e}")
+        # Если не вышло в чат — пробуем в ЛС создателю
+        if chat_id != user_id:
+            try:
+                await bot.send_message(user_id, invite_text, reply_markup=keyboard, parse_mode="Markdown")
+                sent = True
+                logging.info(f"✅ Приглашение отправлено в ЛС {user_id} (фолбэк)")
+            except Exception as e2:
+                logging.error(f"❌ Не удалось отправить в ЛС {user_id}: {e2}")
 
+    if not sent:
+        # Возвращаем деньги если не смогли отправить приглашение
+        await add_balance(user_id, bet)
+        return web.json_response({'error': 'Не удалось отправить приглашение. Убедитесь что бот добавлен в чат.'}, status=500)
+
+    return web.json_response({'success': True, 'table_id': table_id})
 async def handle_join_poker_table(request):
     """POST /api/poker/join"""
     data = await request.json()
