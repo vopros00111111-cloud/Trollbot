@@ -2030,7 +2030,240 @@ async def handle_game_win(request):
     
     new_balance = await add_winnings(user_id, amount, amount, game)
     return web.json_response({'success': True, 'balance': new_balance})
+    
+# === СЛОТЫ НА PYTHON ===
+async def handle_play_slots(request):
+    data = await request.json()
+    user_id = data['user_id']
+    bet = data['amount']
+    
+    # 1. Списываем ставку
+    success, _ = await deduct_balance(user_id, bet)
+    if not success:
+        return web.json_response({'error': 'Недостаточно монет'}, status=400)
+    
+    # 2. Генерируем результат НА СЕРВЕРЕ
+    symbols = ['🍒', '🍋', '🍊', '🍇', '💎', '7️⃣', '🔔']
+    result = [random.choice(symbols) for _ in range(3)]
+    
+    # 3. Считаем выигрыш
+    win = 0
+    if result[0] == result[1] == result[2]:
+        win = bet * 50 if result[0] == '7️⃣' else bet * 10
+    elif result[0] == result[1] or result[1] == result[2] or result[0] == result[2]:
+        win = bet * 2
+    
+    # 4. Начисляем выигрыш если есть
+    new_balance = 0
+    if win > 0:
+        new_balance = await add_winnings(user_id, win, bet, 'slots')
+    else:
+        await log_loss(user_id, bet, 'slots')
+        user_data = await get_user_data(user_id)
+        new_balance = user_data['balance']
+    
+    return web.json_response({
+        'success': True,
+        'result': result,
+        'win': win,
+        'balance': new_balance
+    })
 
+# === РУЛЕТКА НА PYTHON ===
+async def handle_play_roulette(request):
+    data = await request.json()
+    user_id = data['user_id']
+    bet = data['amount']
+    choice = data['choice']       # 'red', 'black', 'green' или число
+    bet_number = data.get('bet_number')  # если ставка на число
+    
+    success, _ = await deduct_balance(user_id, bet)
+    if not success:        return web.json_response({'error': 'Недостаточно монет'}, status=400)
+    
+    # Генерируем число НА СЕРВЕРЕ
+    number = random.randint(0, 36)
+    red_numbers = [1,3,5,7,9,12,14,16,18,19,21,23,25,27,30,32,34,36]
+    
+    if number == 0:
+        color = 'green'
+    elif number in red_numbers:
+        color = 'red'
+    else:
+        color = 'black'
+    
+    win = 0
+    if choice == 'number' and bet_number == number:
+        win = bet * 36
+    elif choice == color:
+        win = bet * 14 if color == 'green' else bet * 2
+    
+    new_balance = 0
+    if win > 0:
+        new_balance = await add_winnings(user_id, win, bet, 'roulette')
+    else:
+        await log_loss(user_id, bet, 'roulette')
+        user_data = await get_user_data(user_id)
+        new_balance = user_data['balance']
+    
+    return web.json_response({
+        'success': True,
+        'number': number,
+        'color': color,
+        'win': win,
+        'balance': new_balance
+    })
+
+# === БЛЭКДЖЕК НА PYTHON ===
+# Для блэкджека нужно хранить состояние игры (колода, карты)
+# Используем словарь в памяти (для одного пользователя)
+blackjack_games = {}  # {user_id: {deck, player_hand, dealer_hand, bet}}
+
+def create_deck_py():
+    suits = ['♠️', '♥️', '♦️', '♣️']
+    ranks = ['2','3','4','5','6','7','8','9','10','J','Q','K','A']
+    deck = []
+    for s in suits:
+        for r in ranks:
+            val = int(r) if r.isdigit() else (11 if r == 'A' else 10)
+            deck.append({'rank': r, 'suit': s, 'value': val})
+    random.shuffle(deck)
+    return deck
+def calc_score_py(hand):
+    score = sum(c['value'] for c in hand)
+    aces = sum(1 for c in hand if c['rank'] == 'A')
+    while score > 21 and aces > 0:
+        score -= 10
+        aces -= 1
+    return score
+
+async def handle_blackjack_start(request):
+    data = await request.json()
+    user_id = data['user_id']
+    bet = data['amount']
+    
+    success, _ = await deduct_balance(user_id, bet)
+    if not success:
+        return web.json_response({'error': 'Недостаточно монет'}, status=400)
+    
+    deck = create_deck_py()
+    player_hand = [deck.pop(), deck.pop()]
+    dealer_hand = [deck.pop(), deck.pop()]
+    
+    blackjack_games[user_id] = {
+        'deck': deck,
+        'player_hand': player_hand,
+        'dealer_hand': dealer_hand,
+        'bet': bet,
+        'finished': False
+    }
+    
+    p_score = calc_score_py(player_hand)
+    
+    # Если сразу 21 — автоматическая победа
+    if p_score == 21:
+        win = bet * 2
+        new_balance = await add_winnings(user_id, win, bet, 'blackjack')
+        del blackjack_games[user_id]
+        return web.json_response({
+            'success': True,
+            'player_hand': player_hand,
+            'dealer_hand': dealer_hand,
+            'player_score': p_score,
+            'dealer_score': calc_score_py(dealer_hand),
+            'win': win,
+            'balance': new_balance,
+            'finished': True,
+            'message': '🎉 Блэкджек! Вы выиграли!'
+        })
+    
+    return web.json_response({        'success': True,
+        'player_hand': player_hand,
+        'dealer_card': dealer_hand[0],  # Показываем только одну карту дилера
+        'player_score': p_score,
+        'finished': False
+    })
+
+async def handle_blackjack_hit(request):
+    data = await request.json()
+    user_id = data['user_id']
+    
+    game = blackjack_games.get(user_id)
+    if not game or game['finished']:
+        return web.json_response({'error': 'Игра не найдена'}, status=400)
+    
+    card = game['deck'].pop()
+    game['player_hand'].append(card)
+    p_score = calc_score_py(game['player_hand'])
+    
+    if p_score > 21:
+        game['finished'] = True
+        await log_loss(user_id, game['bet'], 'blackjack')
+        user_data = await get_user_data(user_id)
+        del blackjack_games[user_id]
+        return web.json_response({
+            'success': True,
+            'player_hand': game['player_hand'],
+            'player_score': p_score,
+            'win': 0,
+            'balance': user_data['balance'],
+            'finished': True,
+            'message': '❌ Перебор! Вы проиграли.'
+        })
+    
+    return web.json_response({
+        'success': True,
+        'player_hand': game['player_hand'],
+        'player_score': p_score,
+        'finished': False
+    })
+
+async def handle_blackjack_stand(request):
+    data = await request.json()
+    user_id = data['user_id']
+    
+    game = blackjack_games.get(user_id)
+    if not game or game['finished']:
+        return web.json_response({'error': 'Игра не найдена'}, status=400)
+    
+    # Дилер берёт карты пока < 17    while calc_score_py(game['dealer_hand']) < 17:
+        game['dealer_hand'].append(game['deck'].pop())
+    
+    ps = calc_score_py(game['player_hand'])
+    ds = calc_score_py(game['dealer_hand'])
+    bet = game['bet']
+    
+    win = 0
+    message = ''
+    if ds > 21 or ps > ds:
+        win = bet * 2
+        message = '🎉 Вы выиграли!'
+    elif ps == ds:
+        win = bet  # Возврат ставки
+        message = '🤝 Ничья!'
+    else:
+        message = '😔 Дилер выиграл!'
+    
+    game['finished'] = True
+    if win > 0:
+        new_balance = await add_winnings(user_id, win, bet, 'blackjack')
+    else:
+        await log_loss(user_id, bet, 'blackjack')
+        user_data = await get_user_data(user_id)
+        new_balance = user_data['balance']
+    
+    del blackjack_games[user_id]
+    
+    return web.json_response({
+        'success': True,
+        'player_hand': game['player_hand'],
+        'dealer_hand': game['dealer_hand'],
+        'player_score': ps,
+        'dealer_score': ds,
+        'win': win,
+        'balance': new_balance,
+        'finished': True,
+        'message': message
+    })
 # Хранилище активных покер-столов
 poker_tables = {}  # {table_id: {...}}
 
