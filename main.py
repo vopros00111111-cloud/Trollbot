@@ -2299,8 +2299,7 @@ async def handle_create_poker_table(request):  # ← ЭТА СТРОКА ОБЯ�
     }
     
     # ОТПРАВЛЯЕМ ПРИГЛАШЕНИЕ
-    webapp_url = "https://vopros00111111-cloud.github.io/Trollbotapp/"
-    
+    webapp_url = f"https://vopros00111111-cloud.github.io/Trollbotapp/?table={table_id}"
     invite_text = (
         f"🃏 **ПОКЕРНЫЙ СТОЛ**\n\n"
         f"👤 Игрок создал стол!\n"
@@ -2368,7 +2367,20 @@ async def handle_join_poker_table(request):
 async def handle_health(request):
     """Простая страница, чтобы Render не засыпал"""
     return web.Response(text="Trollcoin Bot is running!")
-
+async def handle_get_poker_tables(request):
+    """GET /api/poker/tables - Список активных столов"""
+    tables = []
+    for table_id, table in poker_tables.items():
+        if table['status'] == 'waiting':
+            host_data = await get_user_data(table['host'])
+            tables.append({
+                'table_id': table_id,
+                'host_username': host_data['username'] if host_data else 'Unknown',
+                'bet': table['bet'],
+                'max_players': table['max_players'],
+                'players': len(table['players'])
+            })
+    return web.json_response(tables)
 # ============================================
 # СОЗДАЁМ ВЕБ-ПРИЛОЖЕНИЕ
 # ============================================
@@ -2405,6 +2417,7 @@ cors.add(web_app.router.add_post('/api/game/roulette', handle_play_roulette))
 cors.add(web_app.router.add_post('/api/game/blackjack/start', handle_blackjack_start))
 cors.add(web_app.router.add_post('/api/game/blackjack/hit', handle_blackjack_hit))
 cors.add(web_app.router.add_post('/api/game/blackjack/stand', handle_blackjack_stand))
+cors.add(web_app.router.add_get('/api/poker/tables', handle_get_poker_tables))
 cors.add(web_app.router.add_get('/', handle_health))
 cors.add(web_app.router.add_get('/health', handle_health))
 
