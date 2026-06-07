@@ -200,17 +200,17 @@ user_chat_context = {}  # {user_id: {"chat_id": 123, "username": "..."}}
 async def cmd_open_app(message: Message):
     webapp_url = "https://vopros00111111-cloud.github.io/Trollbotapp/"
     
-    # 🔹 Сохраняем chat_id именно этого чата (для покера и других фич)
+    # Сохраняем контекст чата (БЕЗ ПРОБЕЛОВ В КЛЮЧАХ!)
     user_chat_context[message.from_user.id] = {
         "chat_id": message.chat.id,
         "username": message.from_user.username or "unknown"
     }
 
-    # 🔹 Отправляем кнопку прямо в текущий чат (без перенаправления в ЛС)
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🎮 Открыть BlessCoin", web_app=WebAppInfo(url=webapp_url))]
     ])
     
+    # Отправляем кнопку прямо в текущий чат (и в ЛС, и в группе)
     await message.answer(
         "🚀 Нажми на кнопку ниже, чтобы открыть приложение!", 
         reply_markup=keyboard
