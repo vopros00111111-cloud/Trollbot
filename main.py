@@ -198,16 +198,17 @@ from aiogram.types import WebAppInfo, InlineKeyboardMarkup, InlineKeyboardButton
 user_chat_context = {}  # {user_id: {"chat_id": 123, "username": "..."}}
 @dp.message(Command("app", "играть"))
 async def cmd_open_app(message: Message):
-    # Ссылка на твой GitHub Pages
     webapp_url = "https://vopros00111111-cloud.github.io/Trollbotapp/"
     
-    # 🔹 СОХРАНЯЕМ КОНТЕКСТ ЧАТА
+    # 🔹 КЛЮЧЕВОЕ ИЗМЕНЕНИЕ: Сохраняем chat_id ГРУППЫ даже если уводим в ЛС
+    real_chat_id = message.chat.id
+    
     user_chat_context[message.from_user.id] = {
-        "chat_id": message.chat.id,
+        "chat_id": real_chat_id,  # ← Сохраняем именно чат, где написали /app
         "username": message.from_user.username or "unknown"
     }
-    
-    # 🔹 ПРОВЕРКА: если это группа/супергруппа — отправляем в ЛС
+
+    # 🔹 Если это группа/супергруппа — отправляем кнопку в ЛС
     if message.chat.type in ["group", "supergroup"]:
         try:
             await bot.send_message(
@@ -225,11 +226,10 @@ async def cmd_open_app(message: Message):
         keyboard = InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="🎮 Открыть BlessCoin", web_app=WebAppInfo(url=webapp_url))]
         ])
-        
         await message.answer(
             "🚀 Нажми на кнопку ниже, чтобы открыть приложение!", 
             reply_markup=keyboard
-    )
+        )
 @dp.message(Command("history", "logs", "история"))
 async def cmd_history(message: Message):
     if not await check_admin(message.from_user.id):
