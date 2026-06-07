@@ -200,21 +200,37 @@ user_chat_context = {}  # {user_id: {"chat_id": 123, "username": "..."}}
 async def cmd_open_app(message: Message):
     webapp_url = "https://vopros00111111-cloud.github.io/Trollbotapp/"
     
-    # Сохраняем контекст чата (БЕЗ ПРОБЕЛОВ В КЛЮЧАХ!)
+    # 🔹 КЛЮЧЕВОЕ: Сохраняем chat_id ЧАТА, где написали /app
+    # Даже если потом отправим кнопку в ЛС — контекст группы сохранится
     user_chat_context[message.from_user.id] = {
         "chat_id": message.chat.id,
         "username": message.from_user.username or "unknown"
     }
+    
+    logging.info(f"💾 Сохранён контекст для {message.from_user.id}: chat_id={message.chat.id}, type={message.chat.type}")
 
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🎮 Открыть BlessCoin", web_app=WebAppInfo(url=webapp_url))]
     ])
     
-    # Отправляем кнопку прямо в текущий чат (и в ЛС, и в группе)
-    await message.answer(
-        "🚀 Нажми на кнопку ниже, чтобы открыть приложение!", 
-        reply_markup=keyboard
-    )
+    # 🔹 Если это группа — отправляем кнопку в ЛС
+    if message.chat.type in ["group", "supergroup"]:
+        try:
+            await bot.send_message(
+                message.from_user.id,
+                "🚀 Нажми на кнопку чтобы открыть приложение!",
+                reply_markup=keyboard
+            )
+            await message.answer("📩 Отправил ссылку в личные сообщения!")
+        except Exception as e:
+            logging.error(f"❌ Не удалось отправить в ЛС: {e}")
+            await message.answer(f"❌ Ошибка: напишите боту в ЛС сначала /start")
+    else:
+        # В ЛС отправляем напрямую
+        await message.answer(
+            "🚀 Нажми на кнопку ниже, чтобы открыть приложение!", 
+            reply_markup=keyboard
+        )
 @dp.message(Command("history", "logs", "история"))
 async def cmd_history(message: Message):
     if not await check_admin(message.from_user.id):
@@ -2251,7 +2267,6 @@ async def handle_blackjack_stand(request):
     })
 # Хранилище активных покер-столов
 poker_tables = {}  # {table_id: {...}}
-
 async def handle_create_poker_table(request):
     """POST /api/poker/create"""
     data = await request.json()
@@ -2259,17 +2274,19 @@ async def handle_create_poker_table(request):
     bet = data['bet']
     max_players = data.get('max_players', 2)
     
-    # 🔹 ПРИОРИТЕТ: chat_id из запроса (передан из JS)
+    # 🔹 ПРИОРИТЕТ 1: chat_id из запроса (если JS смог его получить)
     chat_id = data.get('chat_id', 0)
     
-    # Фолбэк 1: из контекста команды /app
+    # 🔹 ПРИОРИТЕТ 2: из контекста команды /app (НАДЁЖНЫЙ ФОЛБЭК)
     if chat_id == 0:
         chat_info = user_chat_context.get(user_id, {})
         chat_id = chat_info.get('chat_id', 0)
+        if chat_id:
+            logging.info(f"♻️ Использован chat_id из контекста: {chat_id}")
     
-    # Фолбэк 2: если всё ещё 0 — пытаемся отправить в ЛС создателю
+    # 🔹 ПРИОРИТЕТ 3: если вообще ничего нет — отправляем в ЛС создателю
     if chat_id == 0:
-        chat_id = user_id  # Отправим приглашение в ЛС самому создателю
+        chat_id = user_id
         logging.warning(f"⚠️ chat_id не найден для {user_id}, отправляю в ЛС")
 
     # Проверяем баланс
@@ -2311,7 +2328,7 @@ async def handle_create_poker_table(request):
         logging.info(f"✅ Приглашение отправлено в чат {chat_id}")
     except Exception as e:
         logging.error(f"❌ Не удалось отправить в чат {chat_id}: {e}")
-        # Если не вышло в чат — пробуем в ЛС создателю
+        # Фолбэк: если не вышло в чат — пробуем в ЛС создателю
         if chat_id != user_id:
             try:
                 await bot.send_message(user_id, invite_text, reply_markup=keyboard, parse_mode="Markdown")
