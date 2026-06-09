@@ -2391,6 +2391,43 @@ async def handle_join_poker_table(request):
         return web.json_response({'success': True, 'game_started': True})
     
     return web.json_response({'success': True, 'game_started': False})
+async def handle_get_poker_tables(request):
+    """GET /api/poker/tables - Получить список активных столов"""
+    tables = []
+    for table_id, table in poker_tables.items():
+        if table['status'] == 'waiting':
+            # Получаем username хоста
+            host_data = await get_user_data(table['host'])
+            tables.append({
+                'table_id': table_id,
+                'host_username': host_data['username'] if host_data else 'Unknown',
+                'bet': table['bet'],
+                'max_players': table['max_players'],
+                'players': len(table['players'])
+            })
+    return web.json_response(tables)
+
+async def handle_get_poker_table(request):
+    """GET /api/poker/table/{table_id} - Получить состояние конкретного стола"""
+    table_id = request.match_info['table_id']
+    
+    if table_id not in poker_tables:
+        return web.json_response({'error': 'Стол не найден'}, status=404)
+    
+    table = poker_tables[table_id]
+    
+    return web.json_response({
+        'table_id': table_id,
+        'host': table['host'],
+        'bet': table['bet'],
+        'max_players': table['max_players'],
+        'players': table['players'],
+        'status': table['status'],
+        'pot': table.get('pot', 0),
+        'current_bet': table.get('current_bet', 0),
+        'community_cards': table.get('community_cards', []),
+        'my_cards': table.get('hands', {}).get(int(request.query.get('user_id', 0)), [])
+    })
 async def handle_health(request):
     """Простая страница, чтобы Render не засыпал"""
     return web.Response(text="Trollcoin Bot is running!")
@@ -2445,6 +2482,8 @@ cors.add(web_app.router.add_post('/api/game/blackjack/start', handle_blackjack_s
 cors.add(web_app.router.add_post('/api/game/blackjack/hit', handle_blackjack_hit))
 cors.add(web_app.router.add_post('/api/game/blackjack/stand', handle_blackjack_stand))
 cors.add(web_app.router.add_get('/api/poker/tables', handle_get_poker_tables))
+cors.add(web_app.router.add_get('/api/poker/tables', handle_get_poker_tables))
+cors.add(web_app.router.add_get('/api/poker/table/{table_id}', handle_get_poker_table))
 cors.add(web_app.router.add_get('/', handle_health))
 cors.add(web_app.router.add_get('/health', handle_health))
 
