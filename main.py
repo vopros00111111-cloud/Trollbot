@@ -128,7 +128,7 @@ async def get_user_data(user_id: int):
     async with pool.acquire() as conn:
         return await conn.fetchrow('SELECT username, balance, last_claim, is_admin FROM users WHERE user_id = $1', user_id)
 async def cleanup_old_messages():
-    """Удаляет сообщения старше 5 дней"""
+    """Удаляет сообщения старше 7 дней"""
     try:
         result = await pool.execute('''
             DELETE FROM user_messages
@@ -1945,15 +1945,12 @@ async def _poker_finish(game: dict):
 async def cmd_random(message: Message):
     chat_id = message.chat.id
     try:
-        # Считаем сообщения ТОЛЬКО за последние 24 часа
         result = await pool.fetch('''
-            SELECT user_id, COUNT(*) as message_count
-            FROM user_messages
+            SELECT user_id, message_count 
+            FROM chat_messages 
             WHERE chat_id = $1 
             AND message_time > NOW() - INTERVAL '5 days'
-            GROUP BY user_id
-            HAVING COUNT(*) > 400
-            ORDER BY message_count DESC
+            AND message_count > 400
         ''', chat_id)
         
         if not result:
@@ -1987,22 +1984,19 @@ async def cmd_random(message: Message):
 async def cmd_stats(message: Message):
     chat_id = message.chat.id
     try:
-        # Топ по сообщениям за последние 24 часа
         result = await pool.fetch('''
-            SELECT user_id, COUNT(*) as message_count
-            FROM user_messages
+            SELECT user_id, message_count 
+            FROM chat_messages 
             WHERE chat_id = $1 
-            AND message_time > NOW() - INTERVAL '5 days'
-            GROUP BY user_id
-            ORDER BY message_count DESC
+            ORDER BY message_count DESC 
             LIMIT 10
         ''', chat_id)
         
         if not result:
-            await message.answer("📊 Статистика за последние 5 дней пуста!")
+            await message.answer("📊 Статистика пока пуста!")
             return
         
-        text = "🏆 **Топ участников по сообщениям (5 дней):**\n\n"
+        text = "🏆 **Топ участников по сообщениям:**\n\n"
         for i, row in enumerate(result, 1):
             try:
                 user = await bot.get_chat_member(chat_id, row['user_id'])
@@ -2010,8 +2004,11 @@ async def cmd_stats(message: Message):
             except:
                 username = f"id{row['user_id']}"
             
+            # 🔹 Создаём ссылку на профиль пользователя
+            user_link = f"[{username}](tg://user?id={row['user_id']})"
+            
             medal = "🥇" if i == 1 else "🥈" if i == 2 else "🥉" if i == 3 else f"{i}."
-            text += f"{medal} {username} — **{row['message_count']}** сообщений\n"
+            text += f"{medal} {user_link} — **{row['message_count']}** сообщений\n"
         
         await message.answer(text, parse_mode="Markdown")
         
