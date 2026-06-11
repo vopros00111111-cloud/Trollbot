@@ -1955,10 +1955,9 @@ async def cmd_random(message: Message):
     except Exception as e:
         logging.error(f"Ошибка в /random: {e}")
         await message.answer("❌ Произошла ошибка при выборе победителя!")
-@dp.message(Command("stats", "статистика"))
+@dp.message(Command("stats", "статистика", "стата"))
 async def cmd_stats(message: Message):
     chat_id = message.chat.id
-    
     try:
         result = await pool.fetch('''
             SELECT user_id, message_count 
@@ -1980,8 +1979,11 @@ async def cmd_stats(message: Message):
             except:
                 username = f"id{row['user_id']}"
             
+            # 🔹 ЭКРАНИРУЕМ специальные символы для Markdown
+            safe_username = username.replace('_', '\_').replace('*', '\*').replace('[', '\[').replace(']', '\]')
+            
             medal = "🥇" if i == 1 else "🥈" if i == 2 else "🥉" if i == 3 else f"{i}."
-            text += f"{medal} @{username} — **{row['message_count']}** сообщений\n"
+            text += f"{medal} @{safe_username} — **{row['message_count']}** сообщений\n"
         
         await message.answer(text, parse_mode="Markdown")
         
