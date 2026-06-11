@@ -98,6 +98,17 @@ async def init_db():
                 image_url TEXT
             )
         ''')
+        
+        await conn.execute('''
+            CREATE TABLE IF NOT EXISTS chat_messages (
+                chat_id BIGINT NOT NULL,
+                user_id BIGINT NOT NULL,
+                message_count INTEGER DEFAULT 0,
+                PRIMARY KEY (chat_id, user_id)
+            )
+        ''')
+    
+    # ... остальной код ...
 
 async def register_user(user_id: int, username: str):
     clean_username = username.replace("@", "") if username else f"user_{user_id}"
@@ -165,6 +176,26 @@ async def log_loss(user_id, bet, game_type):
             'INSERT INTO transactions (sender_id, receiver_id, amount, type) VALUES (0, $1, $2, $3)',
             user_id, -bet, f'{game_type}_lose'
         )
+@dp.message()
+async def count_messages(message: Message):
+    """Считаем сообщения каждого пользователя в чате"""
+    # Игнорируем команды
+    if message.text and message.text.startswith('/'):
+        return
+    
+    chat_id = message.chat.id
+    user_id = message.from_user.id
+    
+    try:
+        # Увеличиваем счётчик на 1
+        await conn.execute('''
+            INSERT INTO chat_messages (chat_id, user_id, message_count)
+            VALUES ($1, $2, 1)
+            ON CONFLICT (chat_id, user_id) 
+            DO UPDATE SET message_count = chat_messages.message_count + 1
+        ''', chat_id, user_id)
+    except Exception as e:
+        logging.error(f"Ошибка подсчёта сообщений: {e}")
 @dp.message(Command("casino", "казино"))
 async def cmd_casino_menu(message: Message):
     text = (
@@ -1904,6 +1935,82 @@ async def _poker_finish(game: dict):
             await bot.send_message(p["user_id"], f"🃏 Игра окончена!\n{win_text}", parse_mode="Markdown")
         except Exception:
             pass    
+@dp.message(Command("random", "выбрать", "розыгрыш"))
+async def cmd_random(message: Message):
+    """Выбирает случайного участника из тех, кто написал >300 сообщений"""
+    chat_id = message.chat.id
+    
+    try:
+        # Получаем всех участников с >300 сообщений
+        result = await conn.fetch('''
+            SELECT user_id, message_count 
+            FROM chat_messages 
+            WHERE chat_id = $1 AND message_count > 300
+        ''', chat_id)
+        
+        if not result:
+            await message.answer("😔 Никто из участников ещё не написал 300+ сообщений в этом чате!")
+            return
+        
+        # Выбираем случайного
+        winner = random.choice(result)
+        winner_id = winner['user_id']
+        winner_count = winner['message_count']
+        
+        # Получаем username победителя
+        try:
+            user = await bot.get_chat_member(chat_id, winner_id)
+            username = user.user.username or f"пользователь {winner_id}"
+            full_name = user.user.full_name or username
+        except:
+            username = f"пользователь {winner_id}"
+            full_name = username
+        
+        await message.answer(
+            f"🎉 **Случайный выбор!**\n\n"
+            f"🏆 Победитель: **@{username}** ({full_name})\n"
+            f"📊 Написал сообщений: **{winner_count}**\n\n"
+            f"Поздравляем! 🎊",
+            parse_mode="Markdown"
+        )
+        
+    except Exception as e:
+        logging.error(f"Ошибка в /random: {e}")
+        await message.answer("❌ Произошла ошибка при выборе победителя!")
+@dp.message(Command("stats", "статистика"))
+async def cmd_stats(message: Message):
+    """Показывает топ участников по сообщениям"""
+    chat_id = message.chat.id
+    
+    try:
+        result = await conn.fetch('''
+            SELECT user_id, message_count 
+            FROM chat_messages 
+            WHERE chat_id = $1 
+            ORDER BY message_count DESC 
+            LIMIT 10
+        ''', chat_id)
+        
+        if not result:
+            await message.answer(" Статистика пока пуста!")
+            return
+        
+        text = "🏆 **Топ участников по сообщениям:**\n\n"
+        for i, row in enumerate(result, 1):
+            try:
+                user = await bot.get_chat_member(chat_id, row['user_id'])
+                username = user.user.username or f"id{row['user_id']}"
+            except:
+                username = f"id{row['user_id']}"
+            
+            medal = "🥇" if i == 1 else "🥈" if i == 2 else "🥉" if i == 3 else f"{i}."
+            text += f"{medal} @{username} — **{row['message_count']}** сообщений\n"
+        
+        await message.answer(text, parse_mode="Markdown")
+        
+    except Exception as e:
+        logging.error(f"Ошибка в /stats: {e}")
+        await message.answer(" Ошибка при загрузке статистики!")
 # ============================================
 # WEB API СЕРВЕР (для Telegram WebApp)
 # ============================================
@@ -2313,9 +2420,9 @@ async def handle_create_poker_table(request):  # ← ЭТА СТРОКА ОБЯ�
         'host': user_id,
         'bet': bet,
         'max_players': max_players,
-        host_data = await get_user_data(user_id)
-        host_username = host_data['username'] if host_data else f"user_{user_id}"
-        'players': [{'user_id': user_id, 'username': host_username}]
+        host_data = await get_user_data(user_id),
+        host_username = host_data['username'] if host_data else f"user_{user_id}",
+        'players': [{'user_id': user_id, 'username': host_username}],
         'chat_id': chat_id,
         'status': 'waiting',
         'created_at': time.time()
