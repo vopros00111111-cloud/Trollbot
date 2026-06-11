@@ -177,29 +177,7 @@ async def log_loss(user_id, bet, game_type):
         )
 
 
-# Считаем только НЕ-команды
-@dp.message()
-async def count_messages(message: Message):
-    # Пропускаем команды
-    if not message.text or message.text.startswith('/'):
-        return
-    
-    # Пропускаем ботов
-    if message.from_user.is_bot:
-        return
-        
-    chat_id = message.chat.id
-    user_id = message.from_user.id
-    
-    try:
-        await pool.execute('''
-            INSERT INTO chat_messages (chat_id, user_id, message_count)
-            VALUES ($1, $2, 1)
-            ON CONFLICT (chat_id, user_id) 
-            DO UPDATE SET message_count = chat_messages.message_count + 1
-        ''', chat_id, user_id)
-    except Exception as e:
-        logging.error(f"Ошибка подсчёта сообщений: {e}")
+
 @dp.message(Command("casino", "казино"))
 async def cmd_casino_menu(message: Message):
     text = (
@@ -2010,6 +1988,21 @@ async def cmd_stats(message: Message):
     except Exception as e:
         logging.error(f"Ошибка в /stats: {e}")
         await message.answer("❌ Ошибка при загрузке статистики!")
+@dp.message(lambda m: m.text and not m.text.startswith('/'))
+async def count_messages(message: Message):
+    """Считаем только обычные сообщения (не команды)"""
+    try:
+        chat_id = message.chat.id
+        user_id = message.from_user.id
+        
+        await pool.execute('''
+            INSERT INTO chat_messages (chat_id, user_id, message_count)
+            VALUES ($1, $2, 1)
+            ON CONFLICT (chat_id, user_id) 
+            DO UPDATE SET message_count = chat_messages.message_count + 1
+        ''', chat_id, user_id)
+    except Exception as e:
+        logging.error(f"Ошибка подсчёта сообщений: {e}")
 # ============================================
 # WEB API СЕРВЕР (для Telegram WebApp)
 # ============================================
