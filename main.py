@@ -2413,15 +2413,14 @@ async def handle_create_poker_table(request):  # ← ЭТА СТРОКА ОБЯ�
     success, _ = await deduct_balance(user_id, bet)
     if not success:
         return web.json_response({'error': 'Недостаточно монет'}, status=400)
-    
+    host_data = await get_user_data(user_id)
+    host_username = host_data['username'] if host_data else f"user_{user_id}"
     # Создаём стол
     table_id = str(uuid.uuid4())[:8]
     poker_tables[table_id] = {
         'host': user_id,
         'bet': bet,
         'max_players': max_players,
-        host_data = await get_user_data(user_id)
-        host_username = host_data['username'] if host_data else f"user_{user_id}"
         'players': [{'user_id': user_id, 'username': host_username}],
         'chat_id': chat_id,
         'status': 'waiting',
