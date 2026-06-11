@@ -178,9 +178,14 @@ async def log_loss(user_id, bet, game_type):
 
 
 # Считаем только НЕ-команды
-@dp.message(~Command()) 
+@dp.message()
 async def count_messages(message: Message):
-    if not message.text:  # Игнорируем фото, стикеры и т.д. если не нужно
+    # Пропускаем команды
+    if not message.text or message.text.startswith('/'):
+        return
+    
+    # Пропускаем ботов
+    if message.from_user.is_bot:
         return
         
     chat_id = message.chat.id
