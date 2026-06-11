@@ -97,9 +97,8 @@ async def init_db():
                 image_url TEXT
             )
         ''')
-        
         await conn.execute('''
-            CREATE TABLE IF NOT EXISTS user_messages (
+            CREATE TABLE IF NOT EXISTS chat_messages (
                 id SERIAL PRIMARY KEY,
                 chat_id BIGINT NOT NULL,
                 user_id BIGINT NOT NULL,
@@ -107,11 +106,12 @@ async def init_db():
             )
         ''')
 
-# Индекс для быстрого поиска за последние 24 часа
         await conn.execute('''
-            CREATE INDEX IF NOT EXISTS idx_user_messages_time 
-            ON user_messages(message_time)
+            CREATE INDEX IF NOT EXISTS idx_chat_messages_time 
+            ON chat_messages(message_time)
         ''')
+        
+
     
     # ... остальной код ...
 
@@ -131,21 +131,18 @@ async def cleanup_old_messages():
     """Удаляет сообщения старше 7 дней"""
     try:
         result = await pool.execute('''
-            DELETE FROM user_messages
+            DELETE FROM chat_messages
             WHERE message_time < NOW() - INTERVAL '7 days'
         ''')
         logging.info(f"🧹 Удалено старых сообщений: {result}")
     except Exception as e:
         logging.error(f"Ошибка очистки: {e}")
 
-# Запускай очистку раз в час (добавь в main())
 async def periodic_cleanup():
     while True:
         await asyncio.sleep(3600)  # Каждый час
         await cleanup_old_messages()
-
-# В main() перед dp.start_polling():
-# asyncio.create_task(periodic_cleanup())
+        
 async def add_balance(user_id: int, amount: int):
     async with pool.acquire() as conn:
         await conn.execute('UPDATE users SET balance = balance + $1 WHERE user_id = $2', amount, user_id)
@@ -1946,15 +1943,17 @@ async def cmd_random(message: Message):
     chat_id = message.chat.id
     try:
         result = await pool.fetch('''
-            SELECT user_id, message_count 
-            FROM chat_messages 
+            SELECT user_id, COUNT(*) as message_count
+            FROM chat_messages
             WHERE chat_id = $1 
             AND message_time > NOW() - INTERVAL '5 days'
-            AND message_count > 400
+            GROUP BY user_id
+            HAVING COUNT(*) > 300
+            ORDER BY message_count DESC
         ''', chat_id)
         
         if not result:
-            await message.answer("😔 Никто из участников ещё не написал 400+ сообщений за последние 5 дней!")
+            await message.answer("😔 Никто из участников ещё не написал 300+ сообщений за последние 5 дней!")
             return
         
         winner = random.choice(result)
@@ -1985,18 +1984,20 @@ async def cmd_stats(message: Message):
     chat_id = message.chat.id
     try:
         result = await pool.fetch('''
-            SELECT user_id, message_count 
-            FROM chat_messages 
+            SELECT user_id, COUNT(*) as message_count
+            FROM chat_messages
             WHERE chat_id = $1 
-            ORDER BY message_count DESC 
+            AND message_time > NOW() - INTERVAL '5 days'
+            GROUP BY user_id
+            ORDER BY message_count DESC
             LIMIT 10
         ''', chat_id)
         
         if not result:
-            await message.answer("📊 Статистика пока пуста!")
+            await message.answer("📊 Статистика за последние 5 дней пуста!")
             return
         
-        text = "🏆 **Топ участников по сообщениям:**\n\n"
+        text = "🏆 **Топ участников по сообщениям (5 дней):**\n\n"
         for i, row in enumerate(result, 1):
             try:
                 user = await bot.get_chat_member(chat_id, row['user_id'])
@@ -2004,7 +2005,7 @@ async def cmd_stats(message: Message):
             except:
                 username = f"id{row['user_id']}"
             
-            # 🔹 Создаём ссылку на профиль пользователя
+            # Создаём ссылку на профиль
             user_link = f"[{username}](tg://user?id={row['user_id']})"
             
             medal = "🥇" if i == 1 else "🥈" if i == 2 else "🥉" if i == 3 else f"{i}."
@@ -2015,16 +2016,21 @@ async def cmd_stats(message: Message):
     except Exception as e:
         logging.error(f"Ошибка в /stats: {e}")
         await message.answer("❌ Ошибка при загрузке статистики!")
-@dp.message(lambda m: m.text and not m.text.startswith('/'))
+@dp.message()
 async def count_messages(message: Message):
-    """Считаем только обычные сообщения (не команды)"""
+    # Пропускаем команды
+    if not message.text or message.text.startswith('/'):
+        return
+    # Пропускаем ботов
+    if message.from_user.is_bot:
+        return
+    
+    chat_id = message.chat.id
+    user_id = message.from_user.id
+
     try:
-        chat_id = message.chat.id
-        user_id = message.from_user.id
-        
-        # Просто записываем каждое сообщение с timestamp
         await pool.execute('''
-            INSERT INTO user_messages (chat_id, user_id, message_time)
+            INSERT INTO chat_messages (chat_id, user_id, message_time)
             VALUES ($1, $2, NOW())
         ''', chat_id, user_id)
     except Exception as e:
@@ -2624,9 +2630,12 @@ async def start_web_server():
 # ============================================    
 async def main():
     await init_db()
-    await start_web_server()  # <-- ДОБАВИТЬ ЭТУ СТРОКУ
+    await start_web_server()
     logger.info("🤖 Запущен с PostgreSQL")
+    
+    # Запускаем фоновую очистку
+    asyncio.create_task(periodic_cleanup())
+    
     await dp.start_polling(bot)
-
 if __name__ == "__main__":
     asyncio.run(main())
