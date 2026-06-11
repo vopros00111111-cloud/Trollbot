@@ -97,18 +97,28 @@ async def init_db():
                 image_url TEXT
             )
         ''')
+        # Сначала удаляем старую таблицу (если есть)
+        await conn.execute('DROP TABLE IF EXISTS chat_messages')
+
+        # Создаём новую таблицу с правильной структурой
         await conn.execute('''
-            CREATE TABLE IF NOT EXISTS chat_messages (
+            CREATE TABLE chat_messages (
                 id SERIAL PRIMARY KEY,
                 chat_id BIGINT NOT NULL,
                 user_id BIGINT NOT NULL,
                 message_time TIMESTAMP DEFAULT NOW()
             )
         ''')
+        
+# Индекс для быстрого поиска
+        await conn.execute('''
+            CREATE INDEX idx_chat_messages_time 
+            ON chat_messages(message_time)
+        ''')
 
         await conn.execute('''
-            CREATE INDEX IF NOT EXISTS idx_chat_messages_time 
-            ON chat_messages(message_time)
+            CREATE INDEX idx_chat_messages_chat_user 
+            ON chat_messages(chat_id, user_id)
         ''')
         
 
@@ -127,6 +137,7 @@ async def register_user(user_id: int, username: str):
 async def get_user_data(user_id: int):
     async with pool.acquire() as conn:
         return await conn.fetchrow('SELECT username, balance, last_claim, is_admin FROM users WHERE user_id = $1', user_id)
+
 async def cleanup_old_messages():
     """Удаляет сообщения старше 7 дней"""
     try:
@@ -1943,17 +1954,17 @@ async def cmd_random(message: Message):
     chat_id = message.chat.id
     try:
         result = await pool.fetch('''
-            SELECT user_id, COUNT(*) as message_count
-            FROM chat_messages
+            SELECT user_id, COUNT(*) as message_count 
+            FROM chat_messages 
             WHERE chat_id = $1 
             AND message_time > NOW() - INTERVAL '5 days'
             GROUP BY user_id
-            HAVING COUNT(*) > 300
+            HAVING COUNT(*) > 400
             ORDER BY message_count DESC
         ''', chat_id)
         
         if not result:
-            await message.answer("😔 Никто из участников ещё не написал 300+ сообщений за последние 5 дней!")
+            await message.answer("😔 Никто из участников ещё не написал 400+ сообщений за последние 5 дней!")
             return
         
         winner = random.choice(result)
@@ -1968,9 +1979,12 @@ async def cmd_random(message: Message):
             username = f"пользователь {winner_id}"
             full_name = username
         
+        # Создаём ссылку на профиль
+        user_link = f"[{username}](tg://user?id={winner_id})"
+        
         await message.answer(
             f"🎉 **Случайный выбор!**\n\n"
-            f"🏆 Победитель: **@{username}** ({full_name})\n"
+            f"🏆 Победитель: {user_link} ({full_name})\n"
             f"📊 Написал сообщений за 5 дней: **{winner_count}**\n\n"
             f"Поздравляем! 🎊",
             parse_mode="Markdown"
@@ -2016,7 +2030,7 @@ async def cmd_stats(message: Message):
     except Exception as e:
         logging.error(f"Ошибка в /stats: {e}")
         await message.answer("❌ Ошибка при загрузке статистики!")
-@dp.message()
+@dp.message(lambda m: m.text and not m.text.startswith('/'))
 async def count_messages(message: Message):
     # Пропускаем команды
     if not message.text or message.text.startswith('/'):
