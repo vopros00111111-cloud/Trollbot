@@ -4,7 +4,6 @@ import os
 from datetime import datetime, timedelta
 import asyncpg
 from aiogram import Bot, Dispatcher, F
-from aiogram.filters import Command
 from aiogram.types import ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove, InlineKeyboardMarkup, InlineKeyboardButton, Message, CallbackQuery
 import threading
 from aiogram.fsm.context import FSMContext
@@ -14,7 +13,7 @@ import math
 import time
 from aiogram.types import ChatPermissions
 import uuid
-
+from aiogram.filters import Command, ~Command
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 ADMIN_ID = int(os.getenv("ADMIN_ID"))
 DATABASE_URL = os.getenv("DATABASE_URL")
@@ -176,12 +175,14 @@ async def log_loss(user_id, bet, game_type):
             'INSERT INTO transactions (sender_id, receiver_id, amount, type) VALUES (0, $1, $2, $3)',
             user_id, -bet, f'{game_type}_lose'
         )
-@dp.message()
+
+
+# Считаем только НЕ-команды
+@dp.message(~Command()) 
 async def count_messages(message: Message):
-    """Считаем сообщения каждого пользователя в чате"""
-    if message.text and message.text.startswith('/'):
+    if not message.text:  # Игнорируем фото, стикеры и т.д. если не нужно
         return
-    
+        
     chat_id = message.chat.id
     user_id = message.from_user.id
     
