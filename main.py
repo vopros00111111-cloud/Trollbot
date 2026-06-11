@@ -132,7 +132,7 @@ async def cleanup_old_messages():
     try:
         result = await pool.execute('''
             DELETE FROM user_messages
-            WHERE message_time < NOW() - INTERVAL '5 days'
+            WHERE message_time < NOW() - INTERVAL '7 days'
         ''')
         logging.info(f"🧹 Удалено старых сообщений: {result}")
     except Exception as e:
@@ -1950,14 +1950,14 @@ async def cmd_random(message: Message):
             SELECT user_id, COUNT(*) as message_count
             FROM user_messages
             WHERE chat_id = $1 
-            AND message_time > NOW() - INTERVAL '24 hours'
+            AND message_time > NOW() - INTERVAL '5 days'
             GROUP BY user_id
-            HAVING COUNT(*) > 300
+            HAVING COUNT(*) > 400
             ORDER BY message_count DESC
         ''', chat_id)
         
         if not result:
-            await message.answer("😔 Никто из участников ещё не написал 300+ сообщений за последние 24 часа!")
+            await message.answer("😔 Никто из участников ещё не написал 400+ сообщений за последние 5 дней!")
             return
         
         winner = random.choice(result)
@@ -1975,7 +1975,7 @@ async def cmd_random(message: Message):
         await message.answer(
             f"🎉 **Случайный выбор!**\n\n"
             f"🏆 Победитель: **@{username}** ({full_name})\n"
-            f"📊 Написал сообщений за 24ч: **{winner_count}**\n\n"
+            f"📊 Написал сообщений за 5 дней: **{winner_count}**\n\n"
             f"Поздравляем! 🎊",
             parse_mode="Markdown"
         )
@@ -1992,17 +1992,17 @@ async def cmd_stats(message: Message):
             SELECT user_id, COUNT(*) as message_count
             FROM user_messages
             WHERE chat_id = $1 
-            AND message_time > NOW() - INTERVAL '24 hours'
+            AND message_time > NOW() - INTERVAL '5 days'
             GROUP BY user_id
             ORDER BY message_count DESC
             LIMIT 10
         ''', chat_id)
         
         if not result:
-            await message.answer("📊 Статистика за последние 24 часа пуста!")
+            await message.answer("📊 Статистика за последние 5 дней пуста!")
             return
         
-        text = "🏆 **Топ участников по сообщениям (24ч):**\n\n"
+        text = "🏆 **Топ участников по сообщениям (5 дней):**\n\n"
         for i, row in enumerate(result, 1):
             try:
                 user = await bot.get_chat_member(chat_id, row['user_id'])
