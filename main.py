@@ -179,7 +179,6 @@ async def log_loss(user_id, bet, game_type):
 @dp.message()
 async def count_messages(message: Message):
     """Считаем сообщения каждого пользователя в чате"""
-    # Игнорируем команды
     if message.text and message.text.startswith('/'):
         return
     
@@ -187,8 +186,7 @@ async def count_messages(message: Message):
     user_id = message.from_user.id
     
     try:
-        # Увеличиваем счётчик на 1
-        await conn.execute('''
+        await pool.execute('''
             INSERT INTO chat_messages (chat_id, user_id, message_count)
             VALUES ($1, $2, 1)
             ON CONFLICT (chat_id, user_id) 
@@ -1937,27 +1935,23 @@ async def _poker_finish(game: dict):
             pass    
 @dp.message(Command("random", "выбрать", "розыгрыш"))
 async def cmd_random(message: Message):
-    """Выбирает случайного участника из тех, кто написал >300 сообщений"""
     chat_id = message.chat.id
     
     try:
-        # Получаем всех участников с >300 сообщений
-        result = await conn.fetch('''
+        result = await pool.fetch('''
             SELECT user_id, message_count 
             FROM chat_messages 
             WHERE chat_id = $1 AND message_count > 300
         ''', chat_id)
         
         if not result:
-            await message.answer("😔 Никто из участников ещё не написал 300+ сообщений в этом чате!")
+            await message.answer("😔 Никто из участников ещё не написал 300+ сообщений!")
             return
         
-        # Выбираем случайного
         winner = random.choice(result)
         winner_id = winner['user_id']
         winner_count = winner['message_count']
         
-        # Получаем username победителя
         try:
             user = await bot.get_chat_member(chat_id, winner_id)
             username = user.user.username or f"пользователь {winner_id}"
@@ -1979,11 +1973,10 @@ async def cmd_random(message: Message):
         await message.answer("❌ Произошла ошибка при выборе победителя!")
 @dp.message(Command("stats", "статистика"))
 async def cmd_stats(message: Message):
-    """Показывает топ участников по сообщениям"""
     chat_id = message.chat.id
     
     try:
-        result = await conn.fetch('''
+        result = await pool.fetch('''
             SELECT user_id, message_count 
             FROM chat_messages 
             WHERE chat_id = $1 
@@ -1992,7 +1985,7 @@ async def cmd_stats(message: Message):
         ''', chat_id)
         
         if not result:
-            await message.answer(" Статистика пока пуста!")
+            await message.answer("📊 Статистика пока пуста!")
             return
         
         text = "🏆 **Топ участников по сообщениям:**\n\n"
@@ -2010,7 +2003,7 @@ async def cmd_stats(message: Message):
         
     except Exception as e:
         logging.error(f"Ошибка в /stats: {e}")
-        await message.answer(" Ошибка при загрузке статистики!")
+        await message.answer("❌ Ошибка при загрузке статистики!")
 # ============================================
 # WEB API СЕРВЕР (для Telegram WebApp)
 # ============================================
