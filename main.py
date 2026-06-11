@@ -13,7 +13,7 @@ import math
 import time
 from aiogram.types import ChatPermissions
 import uuid
-from aiogram.filters import Command, ~Command
+from aiogram.filters import Command
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 ADMIN_ID = int(os.getenv("ADMIN_ID"))
 DATABASE_URL = os.getenv("DATABASE_URL")
