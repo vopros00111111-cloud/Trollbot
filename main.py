@@ -2554,20 +2554,33 @@ async def handle_get_poker_tables(request):
     return web.json_response(tables)
 
 async def handle_get_poker_table(request):
-    """GET /api/poker/table/{table_id} - Получить состояние конкретного стола"""
-    table_id = request.match_info['table_id']
-    
+    table_id = int(request.match_info['table_id'])
     if table_id not in poker_tables:
         return web.json_response({'error': 'Стол не найден'}, status=404)
     
     table = poker_tables[table_id]
     
+    # --- НАЧАЛО ИСПРАВЛЕНИЯ ---
+    enriched_players = []
+    for p in table['players']:
+        uid = p['user_id']
+        # Получаем данные юзера из БД
+        user_data = await get_user_data(uid)
+        username = user_data['username'] if user_data else f"user_{uid}"
+        
+        enriched_players.append({
+            'user_id': uid,
+            'username': username,  # <--- ДОБАВЛЯЕМ USERNAME
+            'chips': p.get('chips', 0) # Если есть фишки, тоже передаем
+        })
+    # --- КОНЕЦ ИСПРАВЛЕНИЯ ---
+
     return web.json_response({
         'table_id': table_id,
         'host': table['host'],
         'bet': table['bet'],
         'max_players': table['max_players'],
-        'players': table['players'],
+        'players': enriched_players, # <--- ПЕРЕДАЕМ ОБНОВЛЕННЫЙ СПИСОК
         'status': table['status'],
         'pot': table.get('pot', 0),
         'current_bet': table.get('current_bet', 0),
