@@ -2479,12 +2479,18 @@ async def handle_create_poker_table(request):  # ← ЭТА СТРОКА ОБЯ�
 # 🔹 ОТПРАВЛЯЕМ ПРИГЛАШЕНИЕ В ЧАТ
     webapp_url = "https://vopros00111111-cloud.github.io/Trollbotapp/"
     bot_username = (await bot.get_me()).username  # Получаем username бота
+    sent_msg = await bot.send_message(chat_id, invite_text, reply_markup=keyboard, parse_mode="Markdown")
+    poker_tables[table_id]['invite_msg_id'] = sent_msg.message_id  # 🔹 СОХРАНЯЕМ ID
+
+    # 🔹 ОБНОВЛЁННОЕ ПРИГЛАШЕНИЕ (как в чате)
+    player_names = ", ".join([f"@{p['username']}" for p in poker_tables[table_id]['players']])
 
     invite_text = (
         f"🃏 **ПОКЕРНЫЙ СТОЛ**\n\n"
-        f"👤 Игрок создал стол!\n"
-        f"💰 Ставка: **{bet}** монет\n"
-        f"👥 Игроков: **1/{max_players}**\n\n"
+        f"👥 **Игроки:** {player_names}\n"
+        f"💰 **Ставка:** {bet} монет\n"
+        f"👥 **Игроков:** 1/{max_players}\n"
+        f"💵 **Банк:** {bet} монет\n\n"
         f"Нажмите кнопку чтобы присоединиться!"
     )
 
