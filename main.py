@@ -2769,7 +2769,7 @@ cors.add(web_app.router.add_post('/api/game/blackjack/hit', handle_blackjack_hit
 cors.add(web_app.router.add_post('/api/game/blackjack/stand', handle_blackjack_stand))
 cors.add(web_app.router.add_get('/api/poker/tables', handle_get_poker_tables))
 cors.add(web_app.router.add_get('/api/poker/table/{table_id}', handle_get_poker_table))
-    cors.add(web_app.router.add_post('/api/poker/action', handle_poker_action))
+cors.add(web_app.router.add_post('/api/poker/action', handle_poker_action))
 cors.add(web_app.router.add_get('/', handle_health))
 cors.add(web_app.router.add_get('/health', handle_health))
 
