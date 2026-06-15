@@ -2550,14 +2550,14 @@ async def handle_join_poker_table(request):
     if current_count >= max_count:
         table['status'] = 'started'
         game_entry = {
-            'uuid':        table_id,
-            'host':        table['host'],
-            'bet':         table['bet'],
+            'uuid': table_id,
+            'host': table['host'],
+            'bet': table['bet'],
             'max_players': max_count,
-            'players':     table['players'],
-            'chat_id':     table.get('chat_id', 0),
-            'msg_id':      table.get('invite_msg_id', 0),
-            'status':      'started',
+            'players': table['players'],
+            'chat_id': table.get('chat_id', 0),
+            'msg_id': table.get('invite_msg_id', 0),
+            'status': 'started',
         }
         active_poker_games[table_id] = game_entry
         asyncio.create_task(_deal_poker_cards(game_entry))
@@ -2588,32 +2588,32 @@ async def handle_get_poker_table(request):
     if table_id not in poker_tables:
         return web.json_response({'error': 'Стол не найден'}, status=404)
 
-    table  = poker_tables[table_id]
-    game   = active_poker_games.get(table_id, table)
+    table = poker_tables[table_id]
+    game = active_poker_games.get(table_id, table)
 
     try:
         requesting_uid = int(request.query.get('user_id', 0))
     except (ValueError, TypeError):
         requesting_uid = 0
 
-    hands        = game.get('hands', {})
-    my_cards     = hands.get(requesting_uid, [])
+    hands = game.get('hands', {})
+    my_cards = hands.get(requesting_uid, [])
     last_actions = game.get('last_actions', {})
 
     enriched_players = []
     for p in table['players']:
         uid = p['user_id']
         user_data = await get_user_data(uid)
-        username  = p.get('username') or (user_data['username'] if user_data else f"user_{uid}")
-        action    = last_actions.get(uid, '')
+        username = p.get('username') or (user_data['username'] if user_data else f"user_{uid}")
+        action = last_actions.get(uid, '')
         enriched_players.append({
-            'user_id':  uid,
+            'user_id': uid,
             'username': username,
-            'chips':    p.get('chips', 0),
-            'action':   action,
+            'chips': p.get('chips', 0),
+            'action': action,
         })
 
-    stage     = game.get('stage', 'preflop')
+    stage = game.get('stage', 'preflop')
     community = game.get('community', [])
     if stage == 'preflop':
         visible_community = []
@@ -2636,31 +2636,31 @@ async def handle_get_poker_table(request):
         showdown = showdown_hands
 
     return web.json_response({
-        'success':         True,
-        'table_id':        table_id,
-        'host':            table['host'],
-        'bet':             table['bet'],
-        'max_players':     table['max_players'],
-        'status':          table['status'],
-        'stage':           stage,
-        'players':         enriched_players,
-        'pot':             game.get('pot', 0),
-        'current_bet':     game.get('current_bet', 0),
+        'success': True,
+        'table_id': table_id,
+        'host': table['host'],
+        'bet': table['bet'],
+        'max_players': table['max_players'],
+        'status': table['status'],
+        'stage': stage,
+        'players': enriched_players,
+        'pot': game.get('pot', 0),
+        'current_bet': game.get('current_bet', 0),
         'community_cards': visible_community,
-        'my_cards':        my_cards,
-        'game_started':    table['status'] == 'started',
-        'finished':        bool(game.get('finished')),
-        'winner_info':     winner_info,
-        'showdown':        showdown,
+        'my_cards': my_cards,
+        'game_started': table['status'] == 'started',
+        'finished': bool(game.get('finished')),
+        'winner_info': winner_info,
+        'showdown': showdown,
     })
 
 async def handle_poker_action(request):
     """POST /api/poker/action"""
-    data     = await request.json()
-    user_id  = int(data.get('user_id', 0))
+    data = await request.json()
+    user_id = int(data.get('user_id', 0))
     table_id = data.get('table_id', '')
-    action   = data.get('action', '')
-    amount   = int(data.get('amount', 0))
+    action = data.get('action', '')
+    amount = int(data.get('amount', 0))
 
     if table_id not in active_poker_games:
         return web.json_response({'error': 'Игра не найдена'}, status=404)
@@ -2672,8 +2672,8 @@ async def handle_poker_action(request):
     if user_id in game.get('responses', set()):
         return web.json_response({'error': 'Вы уже сделали ход'}, status=400)
 
-    bet       = game.get('bet', 0)
-    stage     = game.get('stage', 'preflop')
+    bet = game.get('bet', 0)
+    stage = game.get('stage', 'preflop')
     stage_bet = bet if stage in ('preflop', 'flop') else bet * 2
 
     if table_id not in poker_locks:
@@ -2701,9 +2701,9 @@ async def handle_poker_action(request):
             ok, _ = await deduct_balance(user_id, raise_amount)
             if not ok:
                 return web.json_response({'error': 'Недостаточно монет'}, status=400)
-            game['pot']         = game.get('pot', 0) + raise_amount
+            game['pot'] = game.get('pot', 0) + raise_amount
             game['current_bet'] = raise_amount
-            game['responses']   = {user_id}
+            game['responses'] = {user_id}
             game.setdefault('last_actions', {})[user_id] = 'raise:' + str(raise_amount)
             if table_id in poker_tables:
                 poker_tables[table_id]['pot']         = game['pot']
