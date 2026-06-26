@@ -23,7 +23,7 @@ logger = logging.getLogger(__name__)
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 
-# Глобальный пул соединений
+# Глобальный пул соединений 
 pool = None
 
 # 🔹 Словарь для хранения активных таймеров
