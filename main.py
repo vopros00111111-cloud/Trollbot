@@ -2066,773 +2066,163 @@ async def count_messages(message: Message):
         ''', chat_id, user_id)
     except Exception as e:
         logging.error(f"Ошибка подсчёта сообщений: {e}")
-# ============================================
-# WEB API СЕРВЕР (для Telegram WebApp)
-# ============================================
-from aiohttp import web
-
-async def handle_balance(request):
-    """GET /api/balance/{user_id}"""
-    user_id = int(request.match_info['user_id'])
+# ===========================
+# === ГЛОБАЛЬНАЯ РАССЫЛКА ===
+# ===========================
+@dp.message(Command("addchat"))
+async def cmd_addchat(message: Message):
+    if not await check_admin(message.from_user.id):
+        return await message.answer("🔒 Только админ")
     
-    # Проверяем, есть ли пользователь. Если нет — создаем автоматически!
-    data = await get_user_data(user_id)
-    if not data:
-        await register_user(user_id, f"user_{user_id}")
-        data = await get_user_data(user_id)
-    
-    if data:
-        return web.json_response({'balance': data['balance']})
-    return web.json_response({'error': 'User not found'}, status=500)
-
-async def handle_stats(request):
-    """GET /api/stats/{user_id}"""
-    user_id = int(request.match_info['user_id'])
-    
-    # То же самое: авто-регистрация, если пользователя нет
-    data = await get_user_data(user_id)
-    if not data:
-        await register_user(user_id, f"user_{user_id}")
-
-    async with pool.acquire() as conn:
-        # Место в топе
-        rank = await conn.fetchval(
-            "SELECT COUNT(*) + 1 FROM users WHERE balance > (SELECT balance FROM users WHERE user_id = $1)",
-            user_id
-        ) or 1
-        
-        # Игр сыграно (все транзакции)
-        total_games = await conn.fetchval(
-            "SELECT COUNT(*) FROM transactions WHERE sender_id = $1 OR receiver_id = $1",
-            user_id
-        ) or 0
-        
-        # Выиграно монет
-        total_won = await conn.fetchval(
-            "SELECT COALESCE(SUM(amount), 0) FROM transactions WHERE receiver_id = $1 AND type LIKE '%_win'",
-            user_id
-        ) or 0
-
-    return web.json_response({
-        'rank': rank,
-        'totalGames': total_games,
-        'totalWon': total_won
-    })
-async def handle_top(request):
-    """GET /api/top?limit=10"""
-    limit = int(request.query.get('limit', 10))
-    async with pool.acquire() as conn:
-        rows = await conn.fetch(
-            'SELECT username, balance FROM users WHERE balance > 0 ORDER BY balance DESC LIMIT $1',
-            limit
-        )
-    top = [{'username': r['username'], 'balance': r['balance']} for r in rows]
-    return web.json_response(top)
-
-async def handle_catalog(request):
-    """GET /api/catalog"""
-    items = await get_catalog()
-    result = [
-        {
-            'id': r['id'],
-            'name': r['name'],
-            'description': r['description'],
-            'price': r['price']
-        }
-        for r in items
-    ]
-    return web.json_response(result)
-
-async def handle_achievements(request):
-    """GET /api/achievements/{user_id}"""
-    return web.json_response(['🏆 Первый выигрыш', '💰 Богач'])
-
-async def handle_transfer(request):
-    """POST /api/transfer"""
-    data = await request.json()
-    from_id = data['from_id']
-    to_username = data['to_username'].replace('@', '')
-    amount = data['amount']
-    comment = data.get('comment', '')
-    
-    from_data = await get_user_data(from_id)
-    if not from_data or from_data['balance'] < amount:
-        return web.json_response({'error': 'Недостаточно монет'}, status=400)
-    
-    async with pool.acquire() as conn:
-        to_user = await conn.fetchrow('SELECT user_id FROM users WHERE username = $1', to_username)
-    
-    if not to_user:
-        return web.json_response({'error': 'Пользователь не найден'}, status=404)
-    
-    await deduct_balance(from_id, amount)
-    await add_winnings(to_user['user_id'], amount, amount, 'transfer')
+    parts = message.text.split()
+    if len(parts) < 2:
+        return await message.answer("📝 Формат: `/addchat {chat_id}`\nПример: `/addchat -1001234567890`", parse_mode="Markdown")
     
     try:
-        await bot.send_message(to_user['user_id'], f'💸 Тебе перевели {amount} монет\n📝 {comment}')
-    except:
+        chat_id = int(parts[1])
+        async with pool.acquire() as conn:
+            try:
+                chat_info = await bot.get_chat(chat_id)
+                title = chat_info.title or "Unknown"
+            except Exception as e:
+                return await message.answer(f"❌ Не удалось получить информацию о чате: {e}\n\nВозможно бот не добавлен в тот чат.")
+            
+            await conn.execute(
+                "INSERT INTO broadcast_chats (chat_id, title) VALUES ($1, $2) ON CONFLICT (chat_id) DO UPDATE SET title = $2",
+                chat_id, title
+            )
+        await message.answer(f"✅ Чат `{chat_id}` ({title}) добавлен в список рассылки", parse_mode="Markdown")
+    except ValueError:
+        await message.answer("❌ Неверный формат chat_id")
+
+
+@dp.message(Command("removechat"))
+async def cmd_removechat(message: Message):
+    if not await check_admin(message.from_user.id):
+        return await message.answer("🔒 Только админ")
+    
+    parts = message.text.split()
+    if len(parts) < 2:
+        return await message.answer("📝 Формат: `/removechat {chat_id}` или `/removechat {номер}`", parse_mode="Markdown")
+    
+    try:
+        # Пробуем как номер
+        try:
+            index = int(parts[1])
+            async with pool.acquire() as conn:
+                rows = await conn.fetch("SELECT chat_id FROM broadcast_chats ORDER BY added_at DESC")
+                if index < 1 or index > len(rows):
+                    return await message.answer(f"❌ Номер должен быть от 1 до {len(rows)}")
+                chat_id = rows[index - 1]['chat_id']
+                await conn.execute("DELETE FROM broadcast_chats WHERE chat_id = $1", chat_id)
+            await message.answer(f"✅ Чат #{index} удалён из списка рассылки")
+            return
+        except ValueError:
+            pass
+        
+        # Иначе как chat_id
+        chat_id = int(parts[1])
+        async with pool.acquire() as conn:
+            await conn.execute("DELETE FROM broadcast_chats WHERE chat_id = $1", chat_id)
+        await message.answer(f"✅ Чат `{chat_id}` удалён из списка рассылки", parse_mode="Markdown")
+    except ValueError:
+        await message.answer("❌ Неверный формат")
+
+
+@dp.message(Command("listchats"))
+async def cmd_listchats(message: Message):
+    if not await check_admin(message.from_user.id):
+        return await message.answer("🔒 Только админ")
+    
+    async with pool.acquire() as conn:
+        rows = await conn.fetch("SELECT chat_id, title FROM broadcast_chats ORDER BY added_at DESC")
+    
+    if not rows:
+        return await message.answer("📭 Список пуст. Добавь чат командой `/addchat {chat_id}`", parse_mode="Markdown")
+    
+    text = "📋 **Чаты для рассылки:**\n\n"
+    for i, r in enumerate(rows, 1):
+        text += f"**{i}.** `{r['chat_id']}` — {r['title']}\n"
+    text += "\n💡 Используй `/g {номер} {сообщение}` для отправки в конкретный чат"
+    await message.answer(text, parse_mode="Markdown")
+
+
+@dp.message(Command("g"))
+async def cmd_global(message: Message):
+    if not await check_admin(message.from_user.id):
+        return await message.answer("🔒 Только админ")
+    
+    parts = message.text.split(maxsplit=2)
+    
+    if len(parts) < 2:
+        return await message.answer(
+            "📢 **Формат команды:**\n\n"
+            "`/g {сообщение}` — рассылка во все чаты\n"
+            "`/g {номер} {сообщение}` — в конкретный чат\n\n"
+            "Управление списком:\n"
+            "/addchat {chat_id} — добавить чат\n"
+            "/removechat {номер} — убрать чат\n"
+            "/listchats — показать все чаты с номерами",
+            parse_mode="Markdown"
+        )
+    
+    # Вариант 1: /g {номер} {text}
+    try:
+        index = int(parts[1])
+        text = parts[2] if len(parts) > 2 else ""
+        if not text:
+            return await message.answer("❌ Укажи сообщение после номера чата")
+        
+        async with pool.acquire() as conn:
+            rows = await conn.fetch("SELECT chat_id, title FROM broadcast_chats ORDER BY added_at DESC")
+        
+        if index < 1 or index > len(rows):
+            return await message.answer(f"❌ Номер должен быть от 1 до {len(rows)}")
+        
+        target_chat = rows[index - 1]['chat_id']
+        target_title = rows[index - 1]['title']
+        
+        try:
+            await bot.send_message(target_chat, f"📢 **Оповещение:**\n\n{text}", parse_mode="Markdown")
+            await message.answer(f"✅ Отправлено в чат #{index} ({target_title})", parse_mode="Markdown")
+        except Exception as e:
+            await message.answer(f"❌ Ошибка отправки: {e}\n\nВозможно бот не добавлен в тот чат.")
+        return
+    except ValueError:
         pass
     
-    return web.json_response({'success': True})
-
-async def handle_create_table(request):
-    """POST /api/create-table"""
-    data = await request.json()
-    # Здесь потом добавишь реальную логику создания стола
-    return web.json_response({'success': True, 'message': 'Стол создан'})
-async def handle_games(request):
-    """GET /api/games"""
-    games = [
-        {'id': 'poker', 'name': 'Покер', 'description': 'Техасский Холдем', 'icon': '🃏'},
-        {'id': 'durak', 'name': 'Дурак', 'description': 'Классический подкидной', 'icon': '🃏'},
-        {'id': 'slots', 'name': 'Слоты', 'description': 'Игровой автомат', 'icon': '🎰'},
-        {'id': 'roulette', 'name': 'Рулетка', 'description': 'Красное/Чёрное', 'icon': '🎯'},
-        {'id': 'blackjack', 'name': 'Блэкджек', 'description': '21 очко', 'icon': '🎴'}
-    ]
-    return web.json_response(games)
-
-async def handle_game_bet(request):
-    """POST /api/game-bet - Списать ставку"""
-    data = await request.json()
-    user_id = data['user_id']
-    amount = data['amount']
-    game = data['game']
+    # Вариант 2: /g {text} — во все чаты
+    text = message.text[3:].strip()  # убираем "/g "
+    if not text:
+        return await message.answer("❌ Укажи сообщение")
     
-    success, new_balance = await deduct_balance(user_id, amount)
-    if not success:
-        return web.json_response({'error': 'Недостаточно монет'}, status=400)
+    async with pool.acquire() as conn:
+        chats = await conn.fetch("SELECT chat_id, title FROM broadcast_chats ORDER BY added_at DESC")
     
-    await log_loss(user_id, amount, game)
-    return web.json_response({'success': True, 'balance': new_balance})
-
-async def handle_game_win(request):
-    """POST /api/game-win - Начислить выигрыш"""
-    data = await request.json()
-    user_id = data['user_id']
-    amount = data['amount']
-    game = data['game']
+    if not chats:
+        return await message.answer("📭 Нет чатов для рассылки.\nДобавь чат командой `/addchat {chat_id}`", parse_mode="Markdown")
     
-    new_balance = await add_winnings(user_id, amount, amount, game)
-    return web.json_response({'success': True, 'balance': new_balance})
-    
-# === СЛОТЫ НА PYTHON ===
-async def handle_play_slots(request):
-    data = await request.json()
-    user_id = data['user_id']
-    bet = data['amount']
-    
-    # 1. Списываем ставку
-    success, _ = await deduct_balance(user_id, bet)
-    if not success:
-        return web.json_response({'error': 'Недостаточно монет'}, status=400)
-    
-    # 2. Генерируем результат НА СЕРВЕРЕ
-    symbols = ['🍒', '🍋', '🍊', '🍇', '💎', '7️⃣', '🔔']
-    result = [random.choice(symbols) for _ in range(3)]
-    
-    # 3. Считаем выигрыш
-    win = 0
-    if result[0] == result[1] == result[2]:
-        win = bet * 50 if result[0] == '7️⃣' else bet * 10
-    elif result[0] == result[1] or result[1] == result[2] or result[0] == result[2]:
-        win = bet * 2
-    
-    # 4. Начисляем выигрыш если есть
-    new_balance = 0
-    if win > 0:
-        new_balance = await add_winnings(user_id, win, bet, 'slots')
-    else:
-        await log_loss(user_id, bet, 'slots')
-        user_data = await get_user_data(user_id)
-        new_balance = user_data['balance']
-    
-    return web.json_response({
-        'success': True,
-        'result': result,
-        'win': win,
-        'balance': new_balance
-    })
-
-# === РУЛЕТКА НА PYTHON ===
-async def handle_play_roulette(request):
-    data = await request.json()
-    user_id = data['user_id']
-    bet = data['amount']
-    choice = data['choice']       # 'red', 'black', 'green' или число
-    bet_number = data.get('bet_number')  # если ставка на число
-    
-    success, _ = await deduct_balance(user_id, bet)
-    if not success:        return web.json_response({'error': 'Недостаточно монет'}, status=400)
-    
-    # Генерируем число НА СЕРВЕРЕ
-    number = random.randint(0, 36)
-    red_numbers = [1,3,5,7,9,12,14,16,18,19,21,23,25,27,30,32,34,36]
-    
-    if number == 0:
-        color = 'green'
-    elif number in red_numbers:
-        color = 'red'
-    else:
-        color = 'black'
-    
-    win = 0
-    if choice == 'number' and bet_number == number:
-        win = bet * 36
-    elif choice == color:
-        win = bet * 14 if color == 'green' else bet * 2
-    
-    new_balance = 0
-    if win > 0:
-        new_balance = await add_winnings(user_id, win, bet, 'roulette')
-    else:
-        await log_loss(user_id, bet, 'roulette')
-        user_data = await get_user_data(user_id)
-        new_balance = user_data['balance']
-    
-    return web.json_response({
-        'success': True,
-        'number': number,
-        'color': color,
-        'win': win,
-        'balance': new_balance
-    })
-
-# === БЛЭКДЖЕК НА PYTHON ===
-# Для блэкджека нужно хранить состояние игры (колода, карты)
-# Используем словарь в памяти (для одного пользователя)
-blackjack_games = {}  # {user_id: {deck, player_hand, dealer_hand, bet}}
-
-def create_deck_py():
-    suits = ['♠️', '♥️', '♦️', '♣️']
-    ranks = ['2','3','4','5','6','7','8','9','10','J','Q','K','A']
-    deck = []
-    for s in suits:
-        for r in ranks:
-            val = int(r) if r.isdigit() else (11 if r == 'A' else 10)
-            deck.append({'rank': r, 'suit': s, 'value': val})
-    random.shuffle(deck)
-    return deck
-def calc_score_py(hand):
-    score = sum(c['value'] for c in hand)
-    aces = sum(1 for c in hand if c['rank'] == 'A')
-    while score > 21 and aces > 0:
-        score -= 10
-        aces -= 1
-    return score
-
-async def handle_blackjack_start(request):
-    data = await request.json()
-    user_id = data['user_id']
-    bet = data['amount']
-    
-    success, _ = await deduct_balance(user_id, bet)
-    if not success:
-        return web.json_response({'error': 'Недостаточно монет'}, status=400)
-    
-    deck = create_deck_py()
-    player_hand = [deck.pop(), deck.pop()]
-    dealer_hand = [deck.pop(), deck.pop()]
-    
-    blackjack_games[user_id] = {
-        'deck': deck,
-        'player_hand': player_hand,
-        'dealer_hand': dealer_hand,
-        'bet': bet,
-        'finished': False
-    }
-    
-    p_score = calc_score_py(player_hand)
-    
-    # Если сразу 21 — автоматическая победа
-    if p_score == 21:
-        win = bet * 2
-        new_balance = await add_winnings(user_id, win, bet, 'blackjack')
-        del blackjack_games[user_id]
-        return web.json_response({
-            'success': True,
-            'player_hand': player_hand,
-            'dealer_hand': dealer_hand,
-            'player_score': p_score,
-            'dealer_score': calc_score_py(dealer_hand),
-            'win': win,
-            'balance': new_balance,
-            'finished': True,
-            'message': '🎉 Блэкджек! Вы выиграли!'
-        })
-    
-    return web.json_response({        'success': True,
-        'player_hand': player_hand,
-        'dealer_card': dealer_hand[0],  # Показываем только одну карту дилера
-        'player_score': p_score,
-        'finished': False
-    })
-
-async def handle_blackjack_hit(request):
-    data = await request.json()
-    user_id = data['user_id']
-    
-    game = blackjack_games.get(user_id)
-    if not game or game['finished']:
-        return web.json_response({'error': 'Игра не найдена'}, status=400)
-    
-    card = game['deck'].pop()
-    game['player_hand'].append(card)
-    p_score = calc_score_py(game['player_hand'])
-    
-    if p_score > 21:
-        game['finished'] = True
-        await log_loss(user_id, game['bet'], 'blackjack')
-        user_data = await get_user_data(user_id)
-        del blackjack_games[user_id]
-        return web.json_response({
-            'success': True,
-            'player_hand': game['player_hand'],
-            'player_score': p_score,
-            'win': 0,
-            'balance': user_data['balance'],
-            'finished': True,
-            'message': '❌ Перебор! Вы проиграли.'
-        })
-    
-    return web.json_response({
-        'success': True,
-        'player_hand': game['player_hand'],
-        'player_score': p_score,
-        'finished': False
-    })
-
-async def handle_blackjack_stand(request):
-    data = await request.json()
-    user_id = data['user_id']
-    
-    game = blackjack_games.get(user_id)
-    if not game or game['finished']:
-        return web.json_response({'error': 'Игра не найдена'}, status=400)
-    
-    # Дилер берёт карты пока < 17    while calc_score_py(game['dealer_hand']) < 17:
-        game['dealer_hand'].append(game['deck'].pop())
-    
-    ps = calc_score_py(game['player_hand'])
-    ds = calc_score_py(game['dealer_hand'])
-    bet = game['bet']
-    
-    win = 0
-    message = ''
-    if ds > 21 or ps > ds:
-        win = bet * 2
-        message = '🎉 Вы выиграли!'
-    elif ps == ds:
-        win = bet  # Возврат ставки
-        message = '🤝 Ничья!'
-    else:
-        message = '😔 Дилер выиграл!'
-    
-    game['finished'] = True
-    if win > 0:
-        new_balance = await add_winnings(user_id, win, bet, 'blackjack')
-    else:
-        await log_loss(user_id, bet, 'blackjack')
-        user_data = await get_user_data(user_id)
-        new_balance = user_data['balance']
-    
-    del blackjack_games[user_id]
-    
-    return web.json_response({
-        'success': True,
-        'player_hand': game['player_hand'],
-        'dealer_hand': game['dealer_hand'],
-        'player_score': ps,
-        'dealer_score': ds,
-        'win': win,
-        'balance': new_balance,
-        'finished': True,
-        'message': message
-    })
-# Хранилище активных покер-столов
-poker_tables = {}  # {table_id: {...}}
-async def handle_create_poker_table(request):  # ← ЭТА СТРОКА ОБЯЗАТЕЛЬНА!
-    """POST /api/poker/create"""
-    data = await request.json()
-    user_id = data['user_id']
-    bet = data['bet']
-    max_players = data.get('max_players', 2)
-    
-    chat_id = data.get('chat_id', 0)
-    if chat_id == 0:
-        chat_info = user_chat_context.get(user_id, {})
-        chat_id = chat_info.get('chat_id', 0)
-    if chat_id == 0:
-        chat_id = user_id
-    
-    # Проверяем баланс
-    success, _ = await deduct_balance(user_id, bet)
-    if not success:
-        return web.json_response({'error': 'Недостаточно монет'}, status=400)
-    host_data = await get_user_data(user_id)
-    host_username = host_data['username'] if host_data else f"user_{user_id}"
-    # Создаём стол
-    table_id = str(uuid.uuid4())[:8]
-    poker_tables[table_id] = {
-        'host': user_id,
-        'bet': bet,
-        'max_players': max_players,
-        'players': [{'user_id': user_id, 'username': host_username}],
-        'chat_id': chat_id,
-        'status': 'waiting',
-        'created_at': time.time()
-    }
-    
-    # ОТПРАВЛЯЕМ ПРИГЛАШЕНИЕ
-# 🔹 ОТПРАВЛЯЕМ ПРИГЛАШЕНИЕ В ЧАТ
-    webapp_url = "https://vopros00111111-cloud.github.io/Trollbotapp/"
-    bot_username = (await bot.get_me()).username  # Получаем username бота
-
-    invite_text = (
-        f"🃏 **ПОКЕРНЫЙ СТОЛ**\n\n"
-        f"👤 Игрок создал стол!\n"
-        f"💰 Ставка: **{bet}** монет\n"
-        f"👥 Игроков: **1/{max_players}**\n\n"
-        f"Нажмите кнопку чтобы присоединиться!"
-    )
-
-    # 🔹 Кнопка ведёт в ЛС бота с параметром
-    keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🎮 Присоединиться к покеру", url=f"https://t.me/{bot_username}?start=poker_{table_id}")]
-    ])
-
-    sent = False
-    sent_msg_id = None
-    sent_chat_id = None
-    try:
-        sent_msg = await bot.send_message(chat_id, invite_text, reply_markup=keyboard, parse_mode="Markdown")
-        sent = True
-        sent_msg_id = sent_msg.message_id
-        sent_chat_id = chat_id
-        logging.info(f"✅ Приглашение отправлено в чат {chat_id}")
-    except Exception as e:
-        logging.error(f"❌ Не удалось отправить в чат {chat_id}: {e}")
-        if chat_id != user_id:
-            try:
-                keyboard_ls = InlineKeyboardMarkup(inline_keyboard=[
-                    [InlineKeyboardButton(text="🎮 Присоединиться к покеру", url=f"https://t.me/{bot_username}?start=poker_{table_id}")]
-                ])
-                sent_msg = await bot.send_message(user_id, invite_text, reply_markup=keyboard_ls, parse_mode="Markdown")
-                sent = True
-                sent_msg_id = sent_msg.message_id
-                sent_chat_id = user_id
-                logging.info(f"✅ Приглашение отправлено в ЛС {user_id} (фолбэк)")
-            except Exception as e2:
-                logging.error(f"❌ Не удалось отправить в ЛС {user_id}: {e2}")
-
-    if not sent:
-        await add_balance(user_id, bet)
-        return web.json_response({'error': 'Не удалось отправить приглашение. Убедитесь что бот добавлен в чат.'}, status=500)
-
-    # Сохраняем msg_id и chat_id для последующих обновлений
-    poker_tables[table_id]['invite_msg_id'] = sent_msg_id
-    poker_tables[table_id]['chat_id'] = sent_chat_id
-
-    return web.json_response({'success': True, 'table_id': table_id})
-async def handle_join_poker_table(request):
-    """POST /api/poker/join"""
-    data = await request.json()
-    user_id = data['user_id']
-    table_id = data['table_id']
-    
-    if table_id not in poker_tables:
-        return web.json_response({'error': 'Стол не найден'}, status=404)
-    
-    table = poker_tables[table_id]
-    
-    if table['status'] != 'waiting':
-        return web.json_response({'error': 'Игра уже началась'}, status=400)
-    
-    if len(table['players']) >= table['max_players']:
-        return web.json_response({'error': 'Стол заполнен'}, status=400)
-    
-    # Проверяем баланс
-    success, _ = await deduct_balance(user_id, table['bet'])
-    if not success:
-        return web.json_response({'error': 'Недостаточно монет'}, status=400)
-    
-    joined_data = await get_user_data(user_id)
-    joined_username = joined_data['username'] if joined_data else f"user_{user_id}"
-    table['players'].append({'user_id': user_id, 'username': joined_username})
-
-    current_count = len(table['players'])
-    max_count = table['max_players']
-
-    msg_id  = table.get('invite_msg_id')
-    chat_id_inv = table.get('chat_id')
-
-    if current_count >= max_count:
-        table['status'] = 'started'
-        game_entry = {
-            'uuid':        table_id,
-            'host':        table['host'],
-            'bet':         table['bet'],
-            'max_players': max_count,
-            'players':     table['players'],
-            'chat_id':     chat_id_inv,
-            'msg_id':      msg_id,
-            'status':      'started',
-        }
-        active_poker_games[table_id] = game_entry
-
-        # Обновляем приглашение — игра началась
-        if msg_id and chat_id_inv:
-            try:
-                await bot.edit_message_text(
-                    chat_id=chat_id_inv,
-                    message_id=msg_id,
-                    text=(
-                        f"🃏 **ПОКЕРНЫЙ СТОЛ**\n\n"
-                        f"💰 Ставка: **{table['bet']}** монет\n"
-                        f"👥 Игроков: **{current_count}/{max_count}**\n\n"
-                        f"🟢 **Стол заполнен! Игра началась!**"
-                    ),
-                    parse_mode="Markdown"
-                )
-            except Exception:
-                pass
-
-        asyncio.create_task(_deal_poker_cards(game_entry))
-        return web.json_response({'success': True, 'game_started': True})
-
-    # Обновляем счётчик игроков в приглашении
-    if msg_id and chat_id_inv:
+    success = 0
+    failed = 0
+    failed_list = []
+    for i, row in enumerate(chats, 1):
         try:
-            bot_username = (await bot.get_me()).username
-            await bot.edit_message_text(
-                chat_id=chat_id_inv,
-                message_id=msg_id,
-                text=(
-                    f"🃏 **ПОКЕРНЫЙ СТОЛ**\n\n"
-                    f"💰 Ставка: **{table['bet']}** монет\n"
-                    f"👥 Игроков: **{current_count}/{max_count}**\n\n"
-                    f"Нажмите кнопку чтобы присоединиться!"
-                ),
-                reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-                    [InlineKeyboardButton(
-                        text=f"🎮 Присоединиться ({current_count}/{max_count})",
-                        url=f"https://t.me/{bot_username}?start=poker_{table_id}"
-                    )]
-                ]),
-                parse_mode="Markdown"
-            )
-        except Exception:
-            pass
-
-    return web.json_response({
-        'success': True, 'game_started': False,
-        'players': current_count, 'max_players': max_count
-    })
-async def handle_get_poker_tables(request):
-    """GET /api/poker/tables - Получить список активных столов"""
-    tables = []
-    for table_id, table in poker_tables.items():
-        if table['status'] == 'waiting':
-            # Получаем username хоста
-            host_data = await get_user_data(table['host'])
-            tables.append({
-                'table_id': table_id,
-                'host_username': host_data['username'] if host_data else 'Unknown',
-                'bet': table['bet'],
-                'max_players': table['max_players'],
-                'players': len(table['players'])
-            })
-    return web.json_response(tables)
-
-async def handle_get_poker_table(request):
-    table_id = request.match_info['table_id']  # UUID — строка!
-    if table_id not in poker_tables:
-        return web.json_response({'error': 'Стол не найден'}, status=404)
-
-    table = poker_tables[table_id]
-    game = active_poker_games.get(table_id, table)
-
-    try:
-        requesting_uid = int(request.query.get('user_id', 0))
-    except (ValueError, TypeError):
-        requesting_uid = 0
-
-    hands = game.get('hands', {})
-    my_cards = hands.get(requesting_uid, [])
-    last_actions = game.get('last_actions', {})
-
-    enriched_players = []
-    for p in table['players']:
-        uid = p['user_id']
-        user_data = await get_user_data(uid)
-        username = p.get('username') or (user_data['username'] if user_data else f"user_{uid}")
-        action = last_actions.get(uid, '')
-        enriched_players.append({
-            'user_id': uid,
-            'username': username,
-            'chips': p.get('chips', 0),
-            'action': action,
-        })
-
-    stage = game.get('stage', 'preflop')
-    community = game.get('community', [])
-    if stage == 'preflop':
-        visible_community = []
-    elif stage == 'flop':
-        visible_community = community[:3]
-    elif stage == 'turn':
-        visible_community = community[:4]
-    else:
-        visible_community = community[:5]
-
-    # Финал — передаём карты всех + победителя
-    winner_info = None
-    showdown    = None
-    if game.get('finished'):
-        winner_info = game.get('winner_info')
-        # Берём snapshot если есть (hands уже могут быть очищены)
-        showdown = game.get('showdown_snapshot') or {}
-        if not showdown:
-            for uid, cards in hands.items():
-                uname = next((p['username'] for p in table['players'] if p['user_id'] == uid), str(uid))
-                showdown[str(uid)] = {'username': uname, 'cards': cards}
-
-    return web.json_response({
-        'success': True,
-        'table_id': table_id,
-        'host': table['host'],
-        'bet': table['bet'],
-        'max_players': table['max_players'],
-        'status': table['status'],
-        'stage': stage,
-        'players': enriched_players,
-        'pot': game.get('pot', 0),
-        'current_bet': game.get('current_bet', 0),
-        'community_cards': visible_community,
-        'my_cards': my_cards,
-        'game_started': table['status'] == 'started',
-        'finished': bool(game.get('finished')),
-        'winner_info': winner_info,
-        'showdown': showdown,
-    })
-
-async def handle_poker_action(request):
-    """POST /api/poker/action"""
-    data = await request.json()
-    user_id = int(data.get('user_id', 0))
-    table_id = data.get('table_id', '')
-    action = data.get('action', '')
-    amount = int(data.get('amount', 0))
-
-    if table_id not in active_poker_games:
-        return web.json_response({'error': 'Игра не найдена'}, status=404)
-    game = active_poker_games[table_id]
-    if game.get('finished'):
-        return web.json_response({'error': 'Игра уже завершена'}, status=400)
-    if user_id not in game.get('active_players', []):
-        return web.json_response({'error': 'Вы выбыли из игры'}, status=400)
-    if user_id in game.get('responses', set()):
-        return web.json_response({'error': 'Вы уже сделали ход'}, status=400)
-
-    bet = game.get('bet', 0)
-    stage = game.get('stage', 'preflop')
-    stage_bet = bet if stage in ('preflop', 'flop') else bet * 2
-
-    if table_id not in poker_locks:
-        poker_locks[table_id] = asyncio.Lock()
-
-    async with poker_locks[table_id]:
-        if action == 'fold':
-            game['active_players'].remove(user_id)
-            game.setdefault('responses', set()).add(user_id)
-            game.setdefault('last_actions', {})[user_id] = 'fold'
-        elif action == 'call':
-            ok, _ = await deduct_balance(user_id, stage_bet)
-            if not ok:
-                game['active_players'].remove(user_id)
-                game.setdefault('responses', set()).add(user_id)
-                game.setdefault('last_actions', {})[user_id] = 'fold'
-            else:
-                game['pot'] = game.get('pot', 0) + stage_bet
-                game.setdefault('responses', set()).add(user_id)
-                game.setdefault('last_actions', {})[user_id] = 'call:' + str(stage_bet)
-                if table_id in poker_tables:
-                    poker_tables[table_id]['pot'] = game['pot']
-        elif action == 'raise':
-            raise_amount = max(amount, stage_bet + 1)
-            ok, _ = await deduct_balance(user_id, raise_amount)
-            if not ok:
-                return web.json_response({'error': 'Недостаточно монет'}, status=400)
-            game['pot'] = game.get('pot', 0) + raise_amount
-            game['current_bet'] = raise_amount
-            game['responses'] = {user_id}
-            game.setdefault('last_actions', {})[user_id] = 'raise:' + str(raise_amount)
-            if table_id in poker_tables:
-                poker_tables[table_id]['pot']         = game['pot']
-                poker_tables[table_id]['current_bet'] = raise_amount
-        else:
-            return web.json_response({'error': 'Неизвестное действие'}, status=400)
-
-    asyncio.create_task(_check_poker_stage_end(game))
-    return web.json_response({'success': True, 'pot': game.get('pot', 0), 'stage': stage})
-
-async def handle_health(request):
-    """Простая страница, чтобы Render не засыпал"""
-    return web.Response(text="Trollcoin Bot is running!")
-# ============================================
-# СОЗДАЁМ ВЕБ-ПРИЛОЖЕНИЕ
-# ============================================
-web_app = web.Application()
-
-# Настраиваем CORS (чтобы GitHub Pages мог обращаться к Render)
-from aiohttp_cors import setup as cors_setup, ResourceOptions
-
-cors = cors_setup(web_app, defaults={
-    "*": ResourceOptions(
-        allow_credentials=True,
-        expose_headers="*",
-        allow_headers="*",
-        allow_methods=["GET", "POST", "OPTIONS"]
-    )
-})
-
-# Добавляем ВСЕ роуты через cors.add()
-cors.add(web_app.router.add_get('/api/balance/{user_id}', handle_balance))
-cors.add(web_app.router.add_get('/api/stats/{user_id}', handle_stats))
-cors.add(web_app.router.add_get('/api/top', handle_top))
-cors.add(web_app.router.add_get('/api/catalog', handle_catalog))
-cors.add(web_app.router.add_get('/api/achievements/{user_id}', handle_achievements))
-cors.add(web_app.router.add_post('/api/transfer', handle_transfer))
-cors.add(web_app.router.add_post('/api/create-table', handle_create_table))
-cors.add(web_app.router.add_get('/api/games', handle_games))
-cors.add(web_app.router.add_post('/api/game-bet', handle_game_bet))
-cors.add(web_app.router.add_post('/api/game-win', handle_game_win))
-# 🔹 ДОБАВЬ ЭТИ ДВЕ СТРОКИ:
-cors.add(web_app.router.add_post('/api/poker/create', handle_create_poker_table))
-cors.add(web_app.router.add_post('/api/poker/join', handle_join_poker_table))
-cors.add(web_app.router.add_post('/api/game/slots', handle_play_slots))
-cors.add(web_app.router.add_post('/api/game/roulette', handle_play_roulette))
-cors.add(web_app.router.add_post('/api/game/blackjack/start', handle_blackjack_start))
-cors.add(web_app.router.add_post('/api/game/blackjack/hit', handle_blackjack_hit))
-cors.add(web_app.router.add_post('/api/game/blackjack/stand', handle_blackjack_stand))
-cors.add(web_app.router.add_get('/api/poker/tables', handle_get_poker_tables))
-cors.add(web_app.router.add_get('/api/poker/table/{table_id}', handle_get_poker_table))
-cors.add(web_app.router.add_post('/api/poker/action', handle_poker_action))
-cors.add(web_app.router.add_get('/', handle_health))
-cors.add(web_app.router.add_get('/health', handle_health))
-
-async def start_web_server():
-    port = int(os.environ.get("PORT", 10000))
-    runner = web.AppRunner(web_app)
-    await runner.setup()
-    site = web.TCPSite(runner, '0.0.0.0', port)
-    await site.start()
-    print(f"✅ Web API server started on port {port}")
+            await bot.send_message(row['chat_id'], f"📢 **Оповещение:**\n\n{text}", parse_mode="Markdown")
+            success += 1
+        except Exception as e:
+            failed += 1
+            failed_list.append(f"#{i} {row['title']}")
+            logging.error(f"Не удалось отправить в {row['chat_id']}: {e}")
+    
+    result = f"✅ **Рассылка завершена**\n\nУспешно: {success}\nОшибок: {failed}"
+    if failed_list:
+        result += f"\n\n❌ Проблемные чаты:\n" + "\n".join(failed_list[:10])
+    await message.answer(result, parse_mode="Markdown")
 # ============================================
 # ОСНОВНАЯ ФУНКЦИЯ
 # ============================================    
 async def main():
     await init_db()
-    await start_web_server()
     logger.info("🤖 Запущен с PostgreSQL")
     
     # Запускаем фоновую очистку
