@@ -97,18 +97,7 @@ async def init_db():
                 image_url TEXT
             )
         ''')
-        # Сначала удаляем старую таблицу (если есть)
-        await conn.execute('DROP TABLE IF EXISTS chat_messages')
-
-        # Создаём новую таблицу с правильной структурой
-        await conn.execute('''
-            CREATE TABLE chat_messages (
-                id SERIAL PRIMARY KEY,
-                chat_id BIGINT NOT NULL,
-                user_id BIGINT NOT NULL,
-                message_time TIMESTAMP DEFAULT NOW()
-            )
-        ''')
+       
         
 # Индекс для быстрого поиска
         await conn.execute('''
@@ -123,7 +112,7 @@ async def init_db():
         
 
     
-    # ... остальной код ...
+
 
 async def register_user(user_id: int, username: str):
     clean_username = username.replace("@", "") if username else f"user_{user_id}"
@@ -1966,106 +1955,9 @@ async def _poker_finish(game: dict):
     await asyncio.sleep(60)
     active_poker_games.pop(game.get('uuid', ''), None)
     
-@dp.message(Command("random", "выбрать", "розыгрыш"))
-async def cmd_random(message: Message):
-    chat_id = message.chat.id
-    try:
-        result = await pool.fetch('''
-            SELECT user_id, COUNT(*) as message_count 
-            FROM chat_messages 
-            WHERE chat_id = $1 
-            AND message_time > NOW() - INTERVAL '5 days'
-            GROUP BY user_id
-            HAVING COUNT(*) > 400
-            ORDER BY message_count DESC
-        ''', chat_id)
-        
-        if not result:
-            await message.answer("😔 Никто из участников ещё не написал 400+ сообщений за последние 5 дней!")
-            return
-        
-        winner = random.choice(result)
-        winner_id = winner['user_id']
-        winner_count = winner['message_count']
-        
-        try:
-            user = await bot.get_chat_member(chat_id, winner_id)
-            username = user.user.username or f"пользователь {winner_id}"
-            full_name = user.user.full_name or username
-        except:
-            username = f"пользователь {winner_id}"
-            full_name = username
-        
-        # Создаём ссылку на профиль
-        user_link = f"[{username}](tg://user?id={winner_id})"
-        
-        await message.answer(
-            f"🎉 **Случайный выбор!**\n\n"
-            f"🏆 Победитель: {user_link} ({full_name})\n"
-            f"📊 Написал сообщений за 5 дней: **{winner_count}**\n\n"
-            f"Поздравляем! 🎊",
-            parse_mode="Markdown"
-        )
-        
-    except Exception as e:
-        logging.error(f"Ошибка в /random: {e}")
-        await message.answer("❌ Произошла ошибка при выборе победителя!")
-@dp.message(Command("stats", "статистика"))
-async def cmd_stats(message: Message):
-    chat_id = message.chat.id
-    try:
-        result = await pool.fetch('''
-            SELECT user_id, COUNT(*) as message_count
-            FROM chat_messages
-            WHERE chat_id = $1 
-            AND message_time > NOW() - INTERVAL '5 days'
-            GROUP BY user_id
-            ORDER BY message_count DESC
-            LIMIT 10
-        ''', chat_id)
-        
-        if not result:
-            await message.answer("📊 Статистика за последние 5 дней пуста!")
-            return
-        
-        text = "🏆 **Топ участников по сообщениям (5 дней):**\n\n"
-        for i, row in enumerate(result, 1):
-            try:
-                user = await bot.get_chat_member(chat_id, row['user_id'])
-                username = user.user.username or f"id{row['user_id']}"
-            except:
-                username = f"id{row['user_id']}"
-            
-            # Создаём ссылку на профиль
-            user_link = f"[{username}](tg://user?id={row['user_id']})"
-            
-            medal = "🥇" if i == 1 else "🥈" if i == 2 else "🥉" if i == 3 else f"{i}."
-            text += f"{medal} {user_link} — **{row['message_count']}** сообщений\n"
-        
-        await message.answer(text, parse_mode="Markdown")
-        
-    except Exception as e:
-        logging.error(f"Ошибка в /stats: {e}")
-        await message.answer("❌ Ошибка при загрузке статистики!")
-@dp.message(lambda m: m.text and not m.text.startswith('/'))
-async def count_messages(message: Message):
-    # Пропускаем команды
-    if not message.text or message.text.startswith('/'):
-        return
-    # Пропускаем ботов
-    if message.from_user.is_bot:
-        return
-    
-    chat_id = message.chat.id
-    user_id = message.from_user.id
 
-    try:
-        await pool.execute('''
-            INSERT INTO chat_messages (chat_id, user_id, message_time)
-            VALUES ($1, $2, NOW())
-        ''', chat_id, user_id)
-    except Exception as e:
-        logging.error(f"Ошибка подсчёта сообщений: {e}")
+
+
 # ===========================
 # === ГЛОБАЛЬНАЯ РАССЫЛКА ===
 # ===========================
